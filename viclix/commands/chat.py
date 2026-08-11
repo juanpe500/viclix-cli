@@ -221,7 +221,7 @@ def _build_app(base_url, token, project_id):
     from textual.suggester import SuggestFromList
     from textual.widgets import (
         Header, Footer, Input, Static, Label, ListView, ListItem, Collapsible, Markdown,
-        Checkbox,
+        Checkbox, Button,
     )
 
     # Slash-command autocomplete (inline ghost text; → or Tab accepts).
@@ -388,6 +388,52 @@ def _build_app(base_url, token, project_id):
                 return Static(f"[b magenta]approval needed[/] {_esc(content)}", classes="ask")
         # ui_action / browser_test / restart_needed / approval_result / others
         return Static(f"[dim]· {_esc(kind)}: {_esc(content.strip()[:120])}[/]", classes="status")
+
+    class AskCard(Vertical):
+        """Interactive clarifying-question card (mirrors ai.html renderAsk): the
+        question + one clickable button per suggested option. Clicking an option —
+        or typing a free-text answer in the prompt below — continues the run with
+        the original goal + this Q&A, so the agent keeps its framing. An 'Other'
+        free-text choice is always available via the prompt input, per the agent
+        contract (the backend never sends one)."""
+
+        def __init__(self, payload):
+            super().__init__(classes="askcard")
+            self.payload = payload if isinstance(payload, dict) else {}
+            self.question = str(self.payload.get("question") or "").strip()
+            self.answered = False
+
+        def compose(self):
+            yield Static(f"[b yellow]?[/] {_esc(self.question)}", classes="askq")
+            env = self.payload.get("env") or {}
+            if isinstance(env, dict) and env.get("variables"):
+                acc = "read & write" if env.get("access") == "read_write" else "read"
+                yield Static(f"[dim]· .env {_esc(', '.join(str(v) for v in env['variables']))}"
+                             f"  ({acc})[/]", classes="askmeta")
+            for i, o in enumerate(self.payload.get("options") or []):
+                if isinstance(o, dict):
+                    label = str(o.get("label") or "").strip()
+                    desc = str(o.get("description") or "").strip()
+                else:
+                    label, desc = str(o).strip(), ""
+                if not label:
+                    continue
+                b = Button(f"{i + 1}. {_esc(label)}", classes="askopt")
+                b._answer = label   # picked up by ChatScreen.on_button_pressed
+                yield b
+                if desc:
+                    yield Static(f"   [dim]— {_esc(desc)}[/]", classes="askdesc")
+            yield Static("[dim]click an option, or type your own answer below ↓[/]",
+                         classes="askmeta")
+
+        def mark_answered(self, text):
+            """Freeze the card once answered: disable its buttons + show the choice."""
+            if self.answered:
+                return
+            self.answered = True
+            for b in self.query(Button):
+                b.disabled = True
+            self.mount(Static(f"[green]→ {_esc(text)}[/]", classes="askchosen"))
 
     # ── session picker screen ────────────────────────────────────────────────
     class SessionPicker(Screen):
@@ -718,6 +764,8 @@ def _build_app(base_url, token, project_id):
             self._cur_model = None     # model of the run currently rendering
             self._pending_tool = {}    # tool_name -> body widget awaiting its result
             self._iter_header = None   # current iteration's thought header (enriched by its llm)
+            self._last_goal = ""       # newest run goal — wraps an `ask` answer as a continuation
+            self._pending_ask = None   # unanswered AskCard (a typed message answers it)
 
         def compose(self) -> ComposeResult:
             yield Header(show_clock=False)
@@ -864,8 +912,20 @@ def _build_app(base_url, token, project_id):
                 self._step_duration(step)
                 self._pending_tool.clear()       # a reply ends the tool sequence
                 self._iter_header = None
+                self._pending_ask = None         # …and any open question
                 if content:
                     self._add(Markdown(content, classes="mdblock"))
+                return
+            if kind == "ask":
+                self._step_duration(step)
+                self._iter_header = None
+                try:
+                    payload = json.loads(content)
+                except Exception:
+                    payload = {"question": content, "options": []}
+                card = AskCard(payload)
+                self._add(card)
+                self._pending_ask = card
                 return
             tool = step.get("tool") or step.get("tool_name")
             mergeable = tool in MERGE_TOOLS or tool in WRITE_TOOLS
@@ -1002,6 +1062,7 @@ def _build_app(base_url, token, project_id):
             self._iter_header = None
             for run in data.get("runs", []):
                 self._cur_model = run.get("model")
+                self._pending_ask = None            # a new run supersedes a prior question
                 goal = (run.get("goal") or "").strip()
                 if goal:
                     last_goal = goal
@@ -1019,6 +1080,7 @@ def _build_app(base_url, token, project_id):
                 self._acc_usage(run)
             if last_goal:
                 self._set_last(last_goal)
+                self._last_goal = last_goal
             self._refresh_status()
 
         # -- input handling --
@@ -1038,9 +1100,40 @@ def _build_app(base_url, token, project_id):
                 self._add(Static("[yellow]still working on the last turn — Esc to cancel[/]",
                                  classes="status"))
                 return
+            # A typed message while a question is open answers it (the web's "Other").
+            if self._pending_ask is not None and not self._pending_ask.answered:
+                self._answer_ask(self._pending_ask, text)
+                return
             self._add(Static(f"[b green]▸ you[/]  {_esc(text)}", classes="you"))
             self._set_last(text)
             self._send(text)
+
+        def on_button_pressed(self, event):
+            """A clicked (or Enter-activated) ask option → answer that card."""
+            b = event.button
+            if not hasattr(b, "_answer"):
+                return
+            card = b
+            while card is not None and not isinstance(card, AskCard):
+                card = card.parent
+            if card is not None:
+                self._answer_ask(card, b._answer)
+
+        def _answer_ask(self, card, text):
+            """Continue the run carrying the original goal + this clarification,
+            in the same session — mirrors ai.html's startRun(lastGoal + Q&A)."""
+            if card is None or card.answered or self.busy:
+                return
+            if self._pending_ask is card:
+                self._pending_ask = None
+            self._add(Static(f"[b green]▸ you[/]  {_esc(text)}", classes="you"))
+            self._set_last(text)
+            card.mark_answered(text)
+            if self._last_goal:
+                goal = f"{self._last_goal}\n\nClarification — {card.question}\nAnswer: {text}"
+            else:
+                goal = text
+            self._send(goal)
 
         def _command(self, text):
             parts = text.split()
@@ -1130,6 +1223,7 @@ def _build_app(base_url, token, project_id):
         # -- send a message: create run, then poll-stream it --
         def _send(self, goal):
             self.busy = True
+            self._last_goal = goal        # so a later `ask` answer can quote it
             self._iter = ""
             self._prev_at = None
             self._pending_tool.clear()
@@ -1316,6 +1410,14 @@ def _build_app(base_url, token, project_id):
         .status { margin: 0 0 0 2; }
         .error { margin: 0 0 0 2; }
         .ask { margin: 1 0 0 2; }
+        /* Interactive clarifying-question card (yellow accent, like the web). */
+        .askcard { margin: 1 0 0 2; padding: 0 1; height: auto;
+                   background: $warning 8%; border-left: thick $warning; }
+        .askq { margin: 0 0 1 0; }
+        .askmeta { color: $text-muted; }
+        .askdesc { margin: 0 0 1 0; }
+        .askchosen { margin: 1 0 0 0; }
+        .askopt { min-width: 8; width: auto; height: auto; margin: 0 0 1 0; }
         .tool { margin: 0 0 0 2; }
         /* Make the whole title bar clickable (not just the text) + hover feedback,
            so a tool card toggles from anywhere along its row. */
