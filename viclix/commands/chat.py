@@ -717,6 +717,7 @@ def _build_app(base_url, token, project_id):
             self._think_start = 0.0
             self._cur_model = None     # model of the run currently rendering
             self._pending_tool = {}    # tool_name -> body widget awaiting its result
+            self._iter_header = None   # current iteration's thought header (enriched by its llm)
 
         def compose(self) -> ComposeResult:
             yield Header(show_clock=False)
@@ -796,6 +797,21 @@ def _build_app(base_url, token, project_id):
                 return None
             return (i * (pin or 0) + o * (pout or 0)) / 1_000_000
 
+        def _thought_header(self, dur=None, i=0, o=0):
+            """Markup for a '💭 Thought[for Xs] · in·out·$ · #N/M' line, honoring
+            the /show flags. Used for every iteration (tokens only when its llm
+            reports them)."""
+            parts = [f"[dim]💭 Thought{(' for ' + dur) if dur else ''}[/]"]
+            if self.app.show.get("thought_meta") and (i or o):
+                seg = f"[cyan]{_fmtn(i)} in[/] [dim]·[/] [yellow]{_fmtn(o)} out[/]"
+                c = self._step_cost(i, o)
+                if c:
+                    seg += f" [dim]·[/] [green]${c:.4f}[/]"
+                parts.append(seg)
+            if self.app.show.get("iter") and self._iter:
+                parts.append(f"[dim]#{self._iter}[/]")
+            return "   [dim]·[/]   ".join(parts)
+
         def _step_duration(self, step):
             """Seconds since the previous step (server timestamps) → 'Thought for Xs'."""
             cur = None
@@ -822,32 +838,32 @@ def _build_app(base_url, token, project_id):
             if kind == "status":
                 m = re.match(r"Iteration (\d+)/(\d+)", content)
                 if m:
-                    self._iter = f"{m.group(1)}/{m.group(2)}"   # → right of next 'Thought'
+                    # Every iteration gets a thought header — even ones that only
+                    # run a tool (no llm prose). The iteration's llm, if any,
+                    # enriches THIS header with tokens/cost + prose below.
+                    self._iter = f"{m.group(1)}/{m.group(2)}"
+                    self._iter_header = Static(self._thought_header(), classes="think")
+                    self._add(self._iter_header)
                     return
                 if content:
                     self._add(Static(f"[dim]· {_esc(content)}[/]", classes="status"))
                 return
             if kind == "llm":
                 dur = self._step_duration(step)
-                parts = [f"[dim]💭 Thought{(' for ' + dur) if dur else ''}[/]"]
-                if self.app.show.get("thought_meta"):
-                    i = step.get("input_tokens") or 0
-                    o = step.get("output_tokens") or 0
-                    if i or o:
-                        seg = f"[cyan]{_fmtn(i)} in[/] [dim]·[/] [yellow]{_fmtn(o)} out[/]"
-                        c = self._step_cost(i, o)
-                        if c:
-                            seg += f" [dim]·[/] [green]${c:.4f}[/]"
-                        parts.append(seg)
-                if self.app.show.get("iter") and self._iter:
-                    parts.append(f"[dim]#{self._iter}[/]")
-                self._add(Static("   [dim]·[/]   ".join(parts), classes="think"))
+                head = self._thought_header(dur, step.get("input_tokens") or 0,
+                                            step.get("output_tokens") or 0)
+                if self._iter_header is not None:
+                    self._iter_header.update(head)   # enrich this iteration's header
+                    self._iter_header = None
+                else:
+                    self._add(Static(head, classes="think"))
                 if content:
                     self._add(Markdown(content, classes="mdblock"))
                 return
             if kind == "reply":
                 self._step_duration(step)
                 self._pending_tool.clear()       # a reply ends the tool sequence
+                self._iter_header = None
                 if content:
                     self._add(Markdown(content, classes="mdblock"))
                 return
@@ -960,6 +976,7 @@ def _build_app(base_url, token, project_id):
             self._iter = ""
             self._prev_at = None
             self._pending_tool.clear()
+            self._iter_header = None
             for run in data.get("runs", []):
                 self._cur_model = run.get("model")
                 goal = (run.get("goal") or "").strip()
@@ -1093,6 +1110,7 @@ def _build_app(base_url, token, project_id):
             self._iter = ""
             self._prev_at = None
             self._pending_tool.clear()
+            self._iter_header = None
             self._start_thinking()
 
             def go():
