@@ -34,6 +34,14 @@ MODE_HELP = {
 }
 
 
+def _esc(s):
+    """Escape Textual markup in dynamic text — agent output, tool results, code
+    and titles routinely contain '[' / '[/]' which the markup parser would try to
+    interpret as tags (raising MarkupError). Our own literal tags are added around
+    already-escaped content, so they still render."""
+    return str(s or "").replace("[", r"\[")
+
+
 def cmd_agents_chat(args, cfg):
     """Entry point: launch the interactive chat, or explain if textual is missing."""
     base_url = cfg["base_url"]
@@ -66,35 +74,35 @@ def _build_app(base_url, token, project_id):
 
     # ── small render helpers (return a widget for one agent step) ────────────
     def _summarize(kind, tool, content):
-        """One-line title for a collapsible tool card."""
+        """One-line, markup-safe title for a collapsible tool card."""
         c = (content or "").strip().replace("\n", " ")
         if kind == "tool_call":
             try:
-                args = json.loads(content)
+                targs = json.loads(content)
                 bits = []
                 for k in ("path", "command", "url", "name"):
-                    if k in args:
-                        bits.append(str(args[k]))
+                    if k in targs:
+                        bits.append(str(targs[k]))
                 summary = "  ".join(bits) or c[:80]
             except Exception:
                 summary = c[:80]
-            return f"→ {tool or 'tool'}  {summary}"
+            return _esc(f"→ {tool or 'tool'}  {summary}")
         if kind == "tool_result":
-            return f"← {tool or 'result'}  {c[:80]}"
-        return c[:100]
+            return _esc(f"← {tool or 'result'}  {c[:80]}")
+        return _esc(c[:100])
 
     def step_widget(step):
         kind = step.get("kind")
         tool = step.get("tool") or step.get("tool_name")
         content = step.get("content") or ""
         if kind == "llm":
-            return Static(f"[dim italic]{content.strip()}[/]", classes="think")
+            return Static(f"[dim italic]{_esc(content.strip())}[/]", classes="think")
         if kind == "reply":
-            return Static(content.strip(), classes="reply")
+            return Static(_esc(content.strip()), classes="reply")
         if kind == "status":
-            return Static(f"[dim]· {content.strip()}[/]", classes="status")
+            return Static(f"[dim]· {_esc(content.strip())}[/]", classes="status")
         if kind == "error":
-            return Static(f"[b red]error[/] {content.strip()}", classes="error")
+            return Static(f"[b red]error[/] {_esc(content.strip())}", classes="error")
         if kind in ("tool_call", "tool_result"):
             body = content
             if kind == "tool_call":
@@ -102,7 +110,7 @@ def _build_app(base_url, token, project_id):
                     body = json.dumps(json.loads(content), indent=2)
                 except Exception:
                     body = content
-            col = Collapsible(Static(body), title=_summarize(kind, tool, content),
+            col = Collapsible(Static(_esc(body)), title=_summarize(kind, tool, content),
                               collapsed=True, classes="tool")
             return col
         if kind == "ask":
@@ -110,21 +118,21 @@ def _build_app(base_url, token, project_id):
                 q = json.loads(content)
                 txt = q.get("question", content)
                 opts = q.get("options") or []
-                extra = ("\n  " + "  ".join(f"[{i+1}] {o}" for i, o in enumerate(opts))) if opts else ""
-                return Static(f"[b yellow]? {txt}[/]{extra}\n[dim](type your answer as the next message)[/]",
+                extra = ("\n  " + "  ".join(f"\\[{i+1}] {_esc(o)}" for i, o in enumerate(opts))) if opts else ""
+                return Static(f"[b yellow]? {_esc(txt)}[/]{extra}\n[dim](type your answer as the next message)[/]",
                               classes="ask")
             except Exception:
-                return Static(f"[b yellow]? {content}[/]", classes="ask")
+                return Static(f"[b yellow]? {_esc(content)}[/]", classes="ask")
         if kind == "approval":
             try:
                 a = json.loads(content)
-                return Static(f"[b magenta]approval needed[/] for [b]{a.get('tool')}[/] "
+                return Static(f"[b magenta]approval needed[/] for [b]{_esc(a.get('tool'))}[/] "
                               f"[dim](interactive approvals land in a later version — "
                               f"use mode 'full' or approve in the dashboard)[/]", classes="ask")
             except Exception:
-                return Static(f"[b magenta]approval needed[/] {content}", classes="ask")
+                return Static(f"[b magenta]approval needed[/] {_esc(content)}", classes="ask")
         # ui_action / browser_test / restart_needed / approval_result / others
-        return Static(f"[dim]· {kind}: {content.strip()[:120]}[/]", classes="status")
+        return Static(f"[dim]· {_esc(kind)}: {_esc(content.strip()[:120])}[/]", classes="status")
 
     # ── session picker screen ────────────────────────────────────────────────
     class SessionPicker(Screen):
@@ -164,7 +172,7 @@ def _build_app(base_url, token, project_id):
             for s in sessions:
                 when = (s.get("updated_at") or "")[:16].replace("T", " ")
                 title = (s.get("title") or "(untitled)").replace("\n", " ")[:70]
-                item = ListItem(Label(f"{title}\n[dim]{when}[/]"))
+                item = ListItem(Label(f"{_esc(title)}\n[dim]{when}[/]"))
                 item.session_id = s.get("id")
                 lv.append(item)
             lv.focus()
@@ -231,7 +239,7 @@ def _build_app(base_url, token, project_id):
             for run in data.get("runs", []):
                 goal = (run.get("goal") or "").strip()
                 if goal:
-                    self._add(Static(f"[b green]▸ you[/]  {goal}", classes="you"))
+                    self._add(Static(f"[b green]▸ you[/]  {_esc(goal)}", classes="you"))
                 for st in run.get("steps", []):
                     self._add(step_widget(st))
             self._refresh_status()
@@ -249,7 +257,7 @@ def _build_app(base_url, token, project_id):
                 self._add(Static("[yellow]still working on the last turn — Esc to cancel[/]",
                                  classes="status"))
                 return
-            self._add(Static(f"[b green]▸ you[/]  {text}", classes="you"))
+            self._add(Static(f"[b green]▸ you[/]  {_esc(text)}", classes="you"))
             self._send(text)
 
         def _command(self, text):
@@ -287,7 +295,7 @@ def _build_app(base_url, token, project_id):
             elif cmd in ("/quit", "/exit"):
                 self.app.exit()
             else:
-                self._add(Static(f"[dim]unknown command {cmd} — /help[/]", classes="status"))
+                self._add(Static(f"[dim]unknown command {_esc(cmd)} — /help[/]", classes="status"))
 
         def action_cancel(self):
             if self.busy and self.run_id:
@@ -375,7 +383,7 @@ def _build_app(base_url, token, project_id):
         def _turn_error(self, msg):
             self.busy = False
             self.run_id = None
-            self._add(Static(f"[b red]✗[/] {msg}", classes="error"))
+            self._add(Static(f"[b red]✗[/] {_esc(msg)}", classes="error"))
 
     # ── the app ────────────────────────────────────────────────────────────────
     class ViclixChatApp(App):
