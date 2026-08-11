@@ -42,6 +42,28 @@ def _esc(s):
     return str(s or "").replace("[", r"\[")
 
 
+def _fmtk(n):
+    """Compact token count: 7098 → '7k', 371000 → '371k', 1200000 → '1.2M'."""
+    try:
+        n = int(n)
+    except (TypeError, ValueError):
+        return "0"
+    if n >= 1_000_000:
+        return f"{n / 1_000_000:.1f}M"
+    if n >= 1000:
+        return f"{n / 1000:.0f}k"
+    return str(n)
+
+
+def _tok_tag(step):
+    """Dim '· <in> in · <out> out' suffix for a step that reports token usage."""
+    i = step.get("input_tokens") or 0
+    o = step.get("output_tokens") or 0
+    if i or o:
+        return f"   [dim]· {_fmtk(i)} in · {_fmtk(o)} out[/]"
+    return ""
+
+
 def cmd_agents_chat(args, cfg):
     """Entry point: launch the interactive chat, or explain if textual is missing."""
     base_url = cfg["base_url"]
@@ -66,8 +88,16 @@ def _build_app(base_url, token, project_id):
     from textual.app import App, ComposeResult
     from textual.screen import Screen, ModalScreen
     from textual.containers import VerticalScroll, Vertical
+    from textual.suggester import SuggestFromList
     from textual.widgets import (
         Header, Footer, Input, Static, Label, ListView, ListItem, Collapsible,
+    )
+
+    # Slash-command autocomplete (inline ghost text; → or Tab accepts).
+    slash_suggester = SuggestFromList(
+        ["/help", "/model", "/usage", "/new", "/sessions", "/quit",
+         "/mode plan", "/mode manual", "/mode auto_edit", "/mode full"],
+        case_sensitive=False,
     )
 
     dash = _dashboard_base(base_url)
@@ -96,7 +126,7 @@ def _build_app(base_url, token, project_id):
         tool = step.get("tool") or step.get("tool_name")
         content = step.get("content") or ""
         if kind == "llm":
-            return Static(f"[dim italic]{_esc(content.strip())}[/]", classes="think")
+            return Static(f"[dim italic]{_esc(content.strip())}[/]{_tok_tag(step)}", classes="think")
         if kind == "reply":
             return Static(_esc(content.strip()), classes="reply")
         if kind == "status":
@@ -241,6 +271,74 @@ def _build_app(base_url, token, project_id):
             else:
                 self.dismiss(getattr(item, "model_id", None))
 
+    # ── reasoning-effort picker (modal): shown when a reasoning model is chosen ──
+    class ReasoningPicker(ModalScreen):
+        BINDINGS = [("escape", "dismiss", "Close")]
+
+        def __init__(self, model_id, efforts, mandatory, current):
+            super().__init__()
+            self.model_id = model_id
+            self.efforts = efforts or []
+            self.mandatory = mandatory
+            self.current = current
+
+        def compose(self) -> ComposeResult:
+            order = ["minimal", "low", "medium", "high", "xhigh"]
+            ordered = [e for e in order if e in self.efforts]
+            ordered += [e for e in self.efforts if e not in order]
+            if not self.mandatory:
+                ordered.append("none")   # allow turning reasoning off
+            items = []
+            for e in ordered:
+                mark = "● " if e == self.current else "  "
+                li = ListItem(Label(f"{mark}{_esc(e)}"))
+                li.effort = e
+                items.append(li)
+            yield Vertical(
+                Label(f"[b]Reasoning effort[/]   [dim]{_esc(self.model_id)}[/]"),
+                ListView(*items, id="efforts"),
+                id="reasonbox",
+            )
+
+        def on_mount(self):
+            self.query_one("#efforts", ListView).focus()
+
+        def on_list_view_selected(self, event):
+            self.dismiss(getattr(event.item, "effort", None))
+
+    # ── usage panel (modal): context window + spend by model + total ────────────
+    class UsageModal(ModalScreen):
+        BINDINGS = [("escape", "dismiss", "Close"), ("u", "dismiss", "Close")]
+
+        def compose(self) -> ComposeResult:
+            a = self.app
+            lines = ["[b]CONTEXT WINDOW[/]"]
+            cmax = a.ctx_max_by_model.get(a.model)
+            if cmax:
+                pct = (a.ctx_used / cmax * 100) if cmax else 0
+                lines.append(f"  {_fmtk(a.ctx_used)} / {_fmtk(cmax)} tok      [green]{pct:.1f}%[/]")
+            else:
+                lines.append(f"  {_fmtk(a.ctx_used)} tok in context   "
+                             f"[dim](max unknown — favorite the model to see %)[/]")
+            lines.append("")
+            lines.append("[b]SPENT BY MODEL[/]")
+            if not a.usage_by_model:
+                lines.append("  [dim]no runs yet this session[/]")
+            for model, u in a.usage_by_model.items():
+                lines.append(f"  {_esc(model)}   [dim]{u['msgs']} msg[/]   "
+                             f"[cyan]{_fmtk(u['in'])} ↑[/] [yellow]{_fmtk(u['out'])} ↓[/]   "
+                             f"[green]${u['cost']:.4f}[/]")
+            total_msgs = sum(u["msgs"] for u in a.usage_by_model.values())
+            lines.append("")
+            lines.append(f"[b]Total[/]   [dim]{total_msgs} msg[/]   "
+                         f"[cyan]{_fmtk(a.tok_in)} ↑[/] [yellow]{_fmtk(a.tok_out)} ↓[/]   "
+                         f"[green]${a.cost:.4f}[/]")
+            yield Vertical(
+                Static("\n".join(lines)),
+                Label("[dim]Esc to close[/]"),
+                id="usagebox",
+            )
+
     # ── chat screen ───────────────────────────────────────────────────────────
     class ChatScreen(Screen):
         BINDINGS = [
@@ -259,7 +357,8 @@ def _build_app(base_url, token, project_id):
             yield Header(show_clock=False)
             yield Static("[dim]▸ your last message will pin here[/]", id="lastmsg")
             yield VerticalScroll(id="log")
-            yield Input(placeholder="Type a message…  (/help for commands)", id="prompt")
+            yield Input(placeholder="Type a message…  (/ for commands)", id="prompt",
+                        suggester=slash_suggester)
             yield Static(self._status_text(), id="status")
             yield Footer()
 
@@ -269,9 +368,18 @@ def _build_app(base_url, token, project_id):
             self.query_one("#lastmsg", Static).update(f"[b green]▸ you asked:[/] {_esc(t)}")
 
         def _status_text(self):
-            m = self.app.mode
-            return (f"[b]model:[/] {self.app.model}   [b]mode:[/] {m} "
-                    f"[dim]({MODE_HELP[m]})[/]   [b]cost:[/] ${self.app.cost:.4f}")
+            a = self.app
+            cmax = a.ctx_max_by_model.get(a.model)
+            if cmax:
+                pct = (a.ctx_used / cmax * 100) if cmax else 0
+                ctx = f"{_fmtk(a.ctx_used)}/{_fmtk(cmax)} ({pct:.0f}%)"
+            else:
+                ctx = _fmtk(a.ctx_used)
+            reason = f" [magenta]R:{_esc(a.reasoning_effort)}[/]" if a.reasoning_effort else ""
+            return (f"[b]{_esc(a.model)}[/] [dim]· {a.mode}[/]{reason}   "
+                    f"[dim]ctx[/] {ctx}   "
+                    f"Σ [cyan]↑{_fmtk(a.tok_in)}[/] [yellow]↓{_fmtk(a.tok_out)}[/] "
+                    f"[green]${a.cost:.4f}[/]   [dim](/usage /model /mode /help)[/]")
 
         def _refresh_status(self):
             self.query_one("#status", Static).update(self._status_text())
@@ -309,6 +417,7 @@ def _build_app(base_url, token, project_id):
                     self._add(Static(f"[b green]▸ you[/]  {_esc(goal)}", classes="you"))
                 for st in run.get("steps", []):
                     self._add(step_widget(st))
+                self._acc_usage(run)
             if last_goal:
                 self._set_last(last_goal)
             self._refresh_status()
@@ -336,8 +445,9 @@ def _build_app(base_url, token, project_id):
             if cmd == "/help":
                 self._add(Static(
                     "[b]commands[/]\n"
-                    "  /mode [plan|manual|auto_edit|full]   set the run mode\n"
-                    "  /model                                choose model (opens dashboard for now)\n"
+                    "  /mode \\[plan|manual|auto_edit|full]   set the run mode\n"
+                    "  /model                                pick a favorite model (or open the selector)\n"
+                    "  /usage                                token usage: context window + spend by model\n"
                     "  /new                                  start a fresh conversation\n"
                     "  /sessions                             back to the conversation list\n"
                     "  /quit                                 exit\n"
@@ -352,6 +462,8 @@ def _build_app(base_url, token, project_id):
                     self._add(Static("[dim]usage: /mode plan|manual|auto_edit|full[/]", classes="status"))
             elif cmd == "/model":
                 self._open_model_picker()
+            elif cmd == "/usage":
+                self.app.push_screen(UsageModal())
             elif cmd == "/new":
                 self.app.open_chat(None)
             elif cmd == "/sessions":
@@ -371,15 +483,37 @@ def _build_app(base_url, token, project_id):
                         favs = (r.json() or {}).get("favorites", [])
                 except requests.RequestException:
                     pass
+                for f in favs:
+                    if isinstance(f, dict) and f.get("id") and f.get("context_length"):
+                        self.app.ctx_max_by_model[f["id"]] = f["context_length"]
                 self.app.call_from_thread(self._show_picker, favs)
             self.run_worker(go, thread=True)
 
         def _show_picker(self, favs):
+            self._favs = favs
+
             def done(model):
-                if model:
-                    self.app.model = model
-                    self._refresh_status()
-                    self._add(Static(f"[dim]model → {_esc(model)}[/]", classes="status"))
+                if not model:
+                    return
+                self.app.model = model
+                self._add(Static(f"[dim]model → {_esc(model)}[/]", classes="status"))
+                # If this model supports reasoning, offer an effort selector next.
+                info = next((f for f in (self._favs or [])
+                             if isinstance(f, dict) and f.get("id") == model), None)
+                if info and info.get("supports_reasoning") and info.get("reasoning_efforts"):
+                    def eff_done(effort):
+                        self.app.reasoning_effort = effort if effort and effort != "none" else None
+                        if self.app.reasoning_effort:
+                            self._add(Static(f"[dim]reasoning → {_esc(self.app.reasoning_effort)}[/]",
+                                             classes="status"))
+                        self._refresh_status()
+                    self.app.push_screen(
+                        ReasoningPicker(model, info["reasoning_efforts"],
+                                        info.get("reasoning_mandatory"), self.app.reasoning_effort),
+                        eff_done)
+                else:
+                    self.app.reasoning_effort = None   # non-reasoning model → clear
+                self._refresh_status()
             self.app.push_screen(ModelPicker(favs, self.app.model), done)
 
         def action_cancel(self):
@@ -411,6 +545,8 @@ def _build_app(base_url, token, project_id):
                     # honors it only if it's in the user's favorites.
                     if self.app.model and "/" in self.app.model:
                         body["model"] = self.app.model
+                    if self.app.reasoning_effort:
+                        body["reasoning_effort"] = self.app.reasoning_effort
                     r = requests.post(_tok_url(base_url, "projects/agent/runs", token, project_id),
                                       json=body, timeout=30)
                     if r.status_code not in (200, 201):
@@ -453,19 +589,47 @@ def _build_app(base_url, token, project_id):
             self._add(Static("[dim]· working…[/]", classes="status"))
             self._refresh_status()
 
+        def _acc_usage(self, run):
+            """Fold one run's tokens/cost into the session totals + per-model table."""
+            a = self.app
+            model = run.get("model") or "default"
+            i = run.get("input_tokens") or 0
+            o = run.get("output_tokens") or 0
+            try:
+                c = float(run.get("cost") or 0)
+            except (TypeError, ValueError):
+                c = 0.0
+            u = a.usage_by_model.setdefault(model, {"msgs": 0, "in": 0, "out": 0, "cost": 0.0})
+            u["msgs"] += 1
+            u["in"] += i
+            u["out"] += o
+            u["cost"] += c
+            a.tok_in += i
+            a.tok_out += o
+            a.cost += c
+            if i:
+                a.ctx_used = i           # latest run's input ≈ current context size
+            if model != "default":
+                a.model = model
+
         def _turn_done(self, data):
             self.busy = False
             self.run_id = None
-            it, ot = data.get("input_tokens") or 0, data.get("output_tokens") or 0
-            cost = data.get("cost")
-            if cost:
-                try:
-                    self.app.cost += float(cost)
-                except (TypeError, ValueError):
-                    pass
+            self._acc_usage(data)
+            it = data.get("input_tokens") or 0
+            ot = data.get("output_tokens") or 0
+            model = data.get("model") or self.app.model
+            try:
+                cost = float(data.get("cost") or 0)
+            except (TypeError, ValueError):
+                cost = 0.0
             status = data.get("status")
-            tag = {"error": "[red]", "cancelled": "[yellow]"}.get(status, "[green]")
-            self._add(Static(f"{tag}✓ {status}[/]  [dim]{it}+{ot} tok[/]", classes="status"))
+            if status not in ("done", "chat"):
+                tag = {"error": "[red]", "cancelled": "[yellow]"}.get(status, "[dim]")
+                self._add(Static(f"{tag}· {_esc(status)}[/]", classes="status"))
+            costtxt = f" · [green]${cost:.4f}[/]" if cost else ""
+            self._add(Static(f"[b]Total[/] [cyan]{_fmtk(it)} in[/] · [yellow]{_fmtk(ot)} out[/]"
+                             f"{costtxt}   [dim]{_esc(model)}[/]", classes="total"))
             self._refresh_status()
             self.query_one("#prompt", Input).focus()
 
@@ -489,11 +653,19 @@ def _build_app(base_url, token, project_id):
         .error { margin: 0 0 0 2; }
         .ask { margin: 1 0 0 2; }
         .tool { margin: 0 0 0 2; }
+        .total { margin: 0 0 1 0; }
         .hint { padding: 1; color: $text-muted; }
         ModelPicker { align: center middle; }
         #picker { width: 84; max-width: 90%; height: auto; max-height: 80%;
                   background: $panel; border: thick $primary; padding: 1 2; }
         #picker ListView { height: auto; max-height: 22; margin-top: 1; }
+        UsageModal { align: center middle; }
+        #usagebox { width: 74; max-width: 90%; height: auto; background: $panel;
+                    border: thick $primary; padding: 1 2; }
+        ReasoningPicker { align: center middle; }
+        #reasonbox { width: 54; max-width: 90%; height: auto; background: $panel;
+                     border: thick $primary; padding: 1 2; }
+        #reasonbox ListView { height: auto; max-height: 12; margin-top: 1; }
         """
         TITLE = "viclix agents"
 
@@ -501,7 +673,13 @@ def _build_app(base_url, token, project_id):
             super().__init__()
             self.mode = "plan"
             self.model = "account default"
+            self.reasoning_effort = None      # set via /model when a reasoning model is picked
             self.cost = 0.0
+            self.tok_in = 0
+            self.tok_out = 0
+            self.ctx_used = 0                 # latest run's input tokens ≈ context size
+            self.usage_by_model = {}          # model -> {msgs, in, out, cost}
+            self.ctx_max_by_model = {}        # model -> context_length (from favorites)
 
         def on_mount(self):
             self.push_screen(SessionPicker())
