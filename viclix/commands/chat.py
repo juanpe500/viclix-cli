@@ -713,19 +713,19 @@ def _build_app(base_url, token, project_id):
                 return
             if kind == "llm":
                 dur = self._step_duration(step)
-                parts = ["💭 Thought" + (f" for {dur}" if dur else "")]
+                parts = [f"[dim]💭 Thought{(' for ' + dur) if dur else ''}[/]"]
                 if self.app.show.get("thought_meta"):
                     i = step.get("input_tokens") or 0
                     o = step.get("output_tokens") or 0
                     if i or o:
-                        seg = f"{_fmtn(i)} in · {_fmtn(o)} out"
+                        seg = f"[cyan]{_fmtn(i)} in[/] [dim]·[/] [yellow]{_fmtn(o)} out[/]"
                         c = self._step_cost(i, o)
                         if c:
-                            seg += f" · ${c:.4f}"
+                            seg += f" [dim]·[/] [green]${c:.4f}[/]"
                         parts.append(seg)
                 if self.app.show.get("iter") and self._iter:
-                    parts.append(f"#{self._iter}")
-                self._add(Static("[dim]" + _esc("   ·   ".join(parts)) + "[/]", classes="think"))
+                    parts.append(f"[dim]#{self._iter}[/]")
+                self._add(Static("   [dim]·[/]   ".join(parts), classes="think"))
                 if content:
                     self._add(Markdown(content, classes="mdblock"))
                 return
@@ -1086,7 +1086,7 @@ def _build_app(base_url, token, project_id):
         #status { height: 1; color: $text-muted; padding: 0 1; background: $boost; }
         .you { margin: 1 0 0 0; }
         .reply { margin: 0 0 0 2; }
-        .think { margin: 0 0 0 2; }
+        .think { margin: 1 0 0 2; }
         .status { margin: 0 0 0 2; }
         .error { margin: 0 0 0 2; }
         .ask { margin: 1 0 0 2; }
