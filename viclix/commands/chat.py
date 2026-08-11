@@ -212,59 +212,116 @@ def _build_app(base_url, token, project_id):
             sid = None if item.id == "new" else getattr(item, "session_id", None)
             self.app.open_chat(sid)
 
-    # ── model picker (modal): favorites list + "open selector" as the last item ─
-    class ModelPicker(ModalScreen):
-        BINDINGS = [("escape", "dismiss", "Close")]
+    # ── model picker (modal): favorites list; ←/→ tunes reasoning inline ────────
+    _EFFORT_ORDER = ["minimal", "low", "medium", "high", "xhigh"]
 
-        def __init__(self, favorites, current):
+    class ModelPicker(ModalScreen):
+        BINDINGS = [
+            ("escape", "dismiss", "Close"),
+            ("left", "effort(-1)", "− reasoning"),
+            ("right", "effort(1)", "+ reasoning"),
+        ]
+
+        def __init__(self, favorites, current, current_effort):
             super().__init__()
             self.favorites = favorites or []
             self.current = current
+            self.current_effort = current_effort
+            self.efforts = {}   # mid -> ordered list of effort options (may include 'none')
+            self.sel = {}       # mid -> currently selected effort
+            for f in self.favorites:
+                if not (isinstance(f, dict) and f.get("id")
+                        and f.get("supports_reasoning") and f.get("reasoning_efforts")):
+                    continue
+                mid = f["id"]
+                opts = [e for e in _EFFORT_ORDER if e in f["reasoning_efforts"]]
+                opts += [e for e in f["reasoning_efforts"] if e not in _EFFORT_ORDER]
+                if not f.get("reasoning_mandatory"):
+                    opts.append("none")   # allow turning reasoning off
+                self.efforts[mid] = opts
+                self.sel[mid] = self._init_effort(f, opts)
+
+        def _init_effort(self, f, opts):
+            mid = f["id"]
+            if mid == self.current and self.current_effort in opts:
+                return self.current_effort
+            if f.get("reasoning_default") in opts:
+                return f["reasoning_default"]
+            for pref in ("medium", "high", "low"):
+                if pref in opts:
+                    return pref
+            return opts[0] if opts else None
+
+        def _row_label(self, f):
+            mid = f.get("id") or ""
+            name = f.get("name") or mid
+            meta = []
+            ctx = f.get("context_length")
+            if ctx:
+                try:
+                    meta.append(f"[cyan]{int(ctx) // 1000}k[/][dim] ctx[/]")
+                except (TypeError, ValueError):
+                    pass
+            pin, pout = f.get("price_in_per_m"), f.get("price_out_per_m")
+            if pin is not None or pout is not None:
+                pin_s = f"${pin}" if pin is not None else "$?"
+                pout_s = f"${pout}" if pout is not None else "$?"
+                meta.append(f"[green]{pin_s}[/][dim]/[/][yellow]{pout_s}[/][dim] per M[/]")
+            if mid in self.efforts:
+                eff = self.sel.get(mid) or "none"
+                if eff == "none":
+                    meta.append("[magenta]🧠[/] [dim]‹[/] [b]off[/] [dim]›  ←→[/]")
+                else:
+                    meta.append(f"[magenta]🧠[/] [dim]‹[/] [b magenta]{_esc(eff)}[/] [dim]›  ←→[/]")
+            elif f.get("supports_reasoning"):
+                meta.append("[magenta]🧠 reasoning[/]")
+            metaline = "   ".join(meta)
+            mark = "[green]●[/] " if mid == self.current else "  "
+            return (f"{mark}[b]{_esc(name)}[/]\n"
+                    f"    [dim]{_esc(mid)}[/]" + (f"    {metaline}" if metaline else ""))
 
         def compose(self) -> ComposeResult:
             items = []
             for f in self.favorites:
                 if isinstance(f, dict):
                     mid = f.get("id") or ""
-                    name = f.get("name") or mid
-                    meta = []
-                    ctx = f.get("context_length")
-                    if ctx:
-                        try:
-                            meta.append(f"[cyan]{int(ctx) // 1000}k[/][dim] ctx[/]")
-                        except (TypeError, ValueError):
-                            pass
-                    pin, pout = f.get("price_in_per_m"), f.get("price_out_per_m")
-                    if pin is not None or pout is not None:
-                        pin_s = f"${pin}" if pin is not None else "$?"
-                        pout_s = f"${pout}" if pout is not None else "$?"
-                        meta.append(f"[green]{pin_s}[/][dim]/[/][yellow]{pout_s}[/][dim] per M[/]")
-                    if f.get("supports_reasoning"):
-                        meta.append("[magenta]🧠 reasoning[/]")
-                    metaline = "   ".join(meta)
-                    mark = "[green]●[/] " if mid == self.current else "  "
-                    label = (f"{mark}[b]{_esc(name)}[/]\n"
-                             f"    [dim]{_esc(mid)}[/]" + (f"    {metaline}" if metaline else ""))
+                    li = ListItem(Label(self._row_label(f)))
+                    li.fav = f
                 else:
                     mid = str(f)
-                    mark = "[green]●[/] " if mid == self.current else "  "
-                    label = f"{mark}[b]{_esc(mid)}[/]"
-                li = ListItem(Label(label))
+                    li = ListItem(Label(f"  [b]{_esc(mid)}[/]"))
+                    li.fav = None
                 li.model_id = mid
                 li.is_open = False
                 items.append(li)
             openitem = ListItem(Label("🌐  [b]Open model selector in browser…[/]"))
             openitem.model_id = None
             openitem.is_open = True
+            openitem.fav = None
             items.append(openitem)
             yield Vertical(
-                Label("[b]Choose a model[/]   [dim](↑↓ · Enter · Esc to close)[/]"),
+                Label("[b]Choose a model[/]   [dim](↑↓ pick ·[/] "
+                      "[b magenta]←→ change 🧠 reasoning[/] [dim]· Enter · Esc)[/]"),
                 ListView(*items, id="models"),
                 id="picker",
             )
 
         def on_mount(self):
             self.query_one("#models", ListView).focus()
+
+        def action_effort(self, delta: int):
+            lv = self.query_one("#models", ListView)
+            item = lv.highlighted_child
+            if item is None:
+                return
+            mid = getattr(item, "model_id", None)
+            opts = self.efforts.get(mid)
+            if not opts:
+                return
+            cur = self.sel.get(mid)
+            i = opts.index(cur) if cur in opts else 0
+            self.sel[mid] = opts[(i + delta) % len(opts)]
+            item.query_one(Label).update(self._row_label(item.fav))
 
         def on_list_view_selected(self, event):
             item = event.item
@@ -274,43 +331,10 @@ def _build_app(base_url, token, project_id):
                 except Exception:
                     pass
                 self.dismiss(None)
-            else:
-                self.dismiss(getattr(item, "model_id", None))
-
-    # ── reasoning-effort picker (modal): shown when a reasoning model is chosen ──
-    class ReasoningPicker(ModalScreen):
-        BINDINGS = [("escape", "dismiss", "Close")]
-
-        def __init__(self, model_id, efforts, mandatory, current):
-            super().__init__()
-            self.model_id = model_id
-            self.efforts = efforts or []
-            self.mandatory = mandatory
-            self.current = current
-
-        def compose(self) -> ComposeResult:
-            order = ["minimal", "low", "medium", "high", "xhigh"]
-            ordered = [e for e in order if e in self.efforts]
-            ordered += [e for e in self.efforts if e not in order]
-            if not self.mandatory:
-                ordered.append("none")   # allow turning reasoning off
-            items = []
-            for e in ordered:
-                mark = "● " if e == self.current else "  "
-                li = ListItem(Label(f"{mark}{_esc(e)}"))
-                li.effort = e
-                items.append(li)
-            yield Vertical(
-                Label(f"[b]Reasoning effort[/]   [dim]{_esc(self.model_id)}[/]"),
-                ListView(*items, id="efforts"),
-                id="reasonbox",
-            )
-
-        def on_mount(self):
-            self.query_one("#efforts", ListView).focus()
-
-        def on_list_view_selected(self, event):
-            self.dismiss(getattr(event.item, "effort", None))
+                return
+            mid = getattr(item, "model_id", None)
+            eff = self.sel.get(mid)
+            self.dismiss({"model": mid, "effort": (eff if eff and eff != "none" else None)})
 
     # ── usage panel (modal): context window + spend by model + total ────────────
     class UsageModal(ModalScreen):
@@ -496,31 +520,17 @@ def _build_app(base_url, token, project_id):
             self.run_worker(go, thread=True)
 
         def _show_picker(self, favs):
-            self._favs = favs
-
-            def done(model):
-                if not model:
+            def done(result):
+                if not result:
                     return
-                self.app.model = model
-                self._add(Static(f"[dim]model → {_esc(model)}[/]", classes="status"))
-                # If this model supports reasoning, offer an effort selector next.
-                info = next((f for f in (self._favs or [])
-                             if isinstance(f, dict) and f.get("id") == model), None)
-                if info and info.get("supports_reasoning") and info.get("reasoning_efforts"):
-                    def eff_done(effort):
-                        self.app.reasoning_effort = effort if effort and effort != "none" else None
-                        if self.app.reasoning_effort:
-                            self._add(Static(f"[dim]reasoning → {_esc(self.app.reasoning_effort)}[/]",
-                                             classes="status"))
-                        self._refresh_status()
-                    self.app.push_screen(
-                        ReasoningPicker(model, info["reasoning_efforts"],
-                                        info.get("reasoning_mandatory"), self.app.reasoning_effort),
-                        eff_done)
-                else:
-                    self.app.reasoning_effort = None   # non-reasoning model → clear
+                self.app.model = result.get("model")
+                self.app.reasoning_effort = result.get("effort")
+                parts = [f"model → {_esc(self.app.model)}"]
+                if self.app.reasoning_effort:
+                    parts.append(f"🧠 {_esc(self.app.reasoning_effort)}")
+                self._add(Static("[dim]" + "   ·   ".join(parts) + "[/]", classes="status"))
                 self._refresh_status()
-            self.app.push_screen(ModelPicker(favs, self.app.model), done)
+            self.app.push_screen(ModelPicker(favs, self.app.model, self.app.reasoning_effort), done)
 
         def action_cancel(self):
             if self.busy and self.run_id:
@@ -648,6 +658,9 @@ def _build_app(base_url, token, project_id):
     class ViclixChatApp(App):
         CSS = """
         Screen { layout: vertical; }
+        /* Softer selection highlight so colored prices stay readable on the row. */
+        ListView > ListItem.-highlight { background: $primary 20%; }
+        ListView:focus > ListItem.-highlight { background: $primary 35%; }
         #lastmsg { dock: top; height: auto; max-height: 4; padding: 0 1; background: $boost; border-bottom: solid $primary; }
         #log { height: 1fr; padding: 0 1; }
         #prompt { dock: bottom; }
@@ -669,10 +682,6 @@ def _build_app(base_url, token, project_id):
         UsageModal { align: center middle; }
         #usagebox { width: 74; max-width: 90%; height: auto; background: $panel;
                     border: thick $primary; padding: 1 2; }
-        ReasoningPicker { align: center middle; }
-        #reasonbox { width: 54; max-width: 90%; height: auto; background: $panel;
-                     border: thick $primary; padding: 1 2; }
-        #reasonbox ListView { height: auto; max-height: 12; margin-top: 1; }
         """
         TITLE = "viclix agents"
 
