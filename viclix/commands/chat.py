@@ -1117,7 +1117,11 @@ def _build_app(base_url, token, project_id):
         #lastmsg { dock: top; height: auto; max-height: 4; padding: 0 1; background: $boost; border-bottom: solid $primary; }
         #log { height: 1fr; padding: 0 1; }
         #thinking { height: 1; color: $accent; padding: 0 1; display: none; }
-        .mdblock { margin: 0 0 1 2; }
+        /* Markdown brings its own trailing block margin; keep the widget itself
+           marginless so the single blank below a response comes from that, not
+           doubled with ours. */
+        Markdown { margin: 0; padding: 0; }
+        .mdblock { margin: 0 0 0 2; }
         #prompt { height: 3; }
         #status { height: 1; color: $text-muted; padding: 0 1; background: $boost; }
         .you { margin: 1 0 0 0; }
