@@ -296,28 +296,52 @@ def _build_app(base_url, token, project_id):
 
         def _load_worker(self):
             def go():
+                sessions, agents = [], []
                 try:
                     r = requests.get(_tok_url(base_url, "projects/agent/sessions", token, project_id),
                                      timeout=20)
-                    sessions = (r.json() or {}).get("sessions", []) if r.status_code == 200 else []
+                    if r.status_code == 200:
+                        sessions = (r.json() or {}).get("sessions", [])
                 except requests.RequestException:
-                    sessions = []
-                self.app.call_from_thread(self._fill, sessions)
+                    pass
+                try:
+                    ra = requests.get(_tok_url(base_url, "projects/agents", token, project_id), timeout=20)
+                    if ra.status_code == 200:
+                        agents = (ra.json() or {}).get("agents", [])
+                except requests.RequestException:
+                    pass
+                self.app.call_from_thread(self._fill, sessions, agents)
             self.run_worker(go, thread=True, exclusive=True)
 
-        def _fill(self, sessions):
+        def _fill(self, sessions, agents):
             lv = self.query_one("#sessions", ListView)
             lv.clear()
             lv.append(ListItem(Label("[b]＋  New chat[/]"), id="new"))
+
+            # Triggered agents (from the fleet) — shown even when OFF / never run.
+            for a in agents or []:
+                trig = a.get("trigger_type") or "manual"
+                state = "[green]active[/]" if a.get("enabled") else "[dim]off[/]"
+                badge = f"[magenta]{_TRIGGER_BADGE.get(trig, '🤖 ' + trig)}[/] [dim]·[/] {state}"
+                name = (a.get("name") or "(unnamed)").replace("\n", " ").strip()[:60]
+                meta = [f"[dim]ran {_ago(a['last_run_at'])}[/]" if a.get("last_run_at")
+                        else "[dim]never run[/]"]
+                model = a.get("model")
+                if model:
+                    meta.append(f"[cyan]{_esc(str(model).split('/')[-1])}[/]")
+                spent = a.get("total_spent") or 0
+                if spent:
+                    meta.append(f"[green]${spent:.4f}[/]")
+                item = ListItem(Label(f"{badge}  [b]{_esc(name)}[/]\n    {'   '.join(meta)}"))
+                item.session_id = None
+                item.agent_id = a.get("id")
+                lv.append(item)
+
+            # Chat conversations (agent-kind sessions are represented by the agent above).
             for s in sessions:
+                if s.get("kind") == "agent":
+                    continue
                 title = (s.get("title") or "(untitled)").replace("\n", " ").strip()[:66]
-                trig = s.get("trigger_type")
-                if s.get("kind") == "agent" and trig:
-                    badge = f"[magenta]{_TRIGGER_BADGE.get(trig, '🤖 ' + trig)}[/]"
-                    if s.get("agent_name"):
-                        badge += f" [dim]{_esc(s['agent_name'])}[/]"
-                else:
-                    badge = "[dim]💬 chat[/]"
                 meta = []
                 created = _shortdate(s.get("created_at"))
                 if created:
@@ -336,16 +360,45 @@ def _build_app(base_url, token, project_id):
                 cost = s.get("cost") or 0
                 if cost:
                     meta.append(f"[green]${cost:.4f}[/]")
-                metaline = "   ".join(meta)
-                item = ListItem(Label(f"{badge}  [b]{_esc(title)}[/]\n    {metaline}"))
+                item = ListItem(Label(f"[dim]💬 chat[/]  [b]{_esc(title)}[/]\n    {'   '.join(meta)}"))
                 item.session_id = s.get("id")
+                item.agent_id = None
                 lv.append(item)
             lv.focus()
 
         def on_list_view_selected(self, event):
             item = event.item
-            sid = None if item.id == "new" else getattr(item, "session_id", None)
-            self.app.open_chat(sid)
+            if item.id == "new":
+                self.app.open_chat(None)
+                return
+            aid = getattr(item, "agent_id", None)
+            if aid:
+                self._open_agent(aid)
+                return
+            self.app.open_chat(getattr(item, "session_id", None))
+
+        def _open_agent(self, agent_id):
+            """An agent has no single 'session' — open its latest run's conversation."""
+            def go():
+                sid = None
+                try:
+                    r = requests.get(_tok_url(base_url, f"projects/agents/{agent_id}", token, project_id),
+                                     timeout=20)
+                    if r.status_code == 200:
+                        for run in (r.json() or {}).get("recent_runs", []):
+                            if run.get("session_id"):
+                                sid = run["session_id"]
+                                break
+                except requests.RequestException:
+                    pass
+                self.app.call_from_thread(self._agent_opened, sid)
+            self.run_worker(go, thread=True)
+
+        def _agent_opened(self, sid):
+            if sid:
+                self.app.open_chat(sid)
+            else:
+                self.app.notify("This agent has no runs yet — nothing to open.", severity="warning")
 
     # ── model picker (modal): favorites list; ←/→ tunes reasoning inline ────────
     _EFFORT_ORDER = ["minimal", "low", "medium", "high", "xhigh"]
