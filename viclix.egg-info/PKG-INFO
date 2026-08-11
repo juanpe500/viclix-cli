@@ -1,0 +1,122 @@
+Metadata-Version: 2.4
+Name: viclix
+Version: 0.1.22
+Summary: Official Viclix CLI — deploy and manage Viclix projects from your terminal.
+Author: Sizth, LLC
+Project-URL: Homepage, https://viclix.com
+Project-URL: Dashboard, https://dashboard.viclix.com
+Keywords: viclix,deploy,cli,paas
+Requires-Python: >=3.8
+Description-Content-Type: text/markdown
+Requires-Dist: requests>=2.20
+
+# viclix
+
+Official Viclix CLI — deploy and manage your [Viclix](https://viclix.com) projects from the terminal.
+
+## Install
+
+```bash
+pip install viclix
+```
+
+This exposes a `viclix` command on your PATH.
+
+## Quick start
+
+```bash
+# 1. Log in once with an account API token (Dashboard → Settings → Tokens)
+viclix login
+
+# 2. Inside your project's git repo, register + deploy it
+cd my-app
+viclix init
+
+# 3. Ship changes anytime
+viclix deploy
+```
+
+`viclix login` stores your token in `~/.viclix/config.json`. Set `VICLIX_HOME`
+to change that location.
+
+## How `init` picks your repo
+
+- If the repo already has an `origin` remote, `viclix init` registers **that**
+  repo and branch with Viclix — no GitHub token needed.
+- If there's no remote yet, it offers to create a private GitHub repository and
+  push your code (this path needs a GitHub token: pass `--github-token`, store
+  one with `viclix login --github-token ...`, or paste it when prompted).
+
+### What the GitHub token needs
+
+**Classic token** — tick the `repo` scope. That's the whole setup.
+
+**Fine-grained token** (`github_pat_…`) — choosing "All repositories" is *not* a
+permission grant, so set all of these:
+
+| Setting | Value |
+| --- | --- |
+| Resource owner | your account (or the org that will own the repo) |
+| Repository access | **All repositories** — "Only select" can't create repos |
+| Administration | **Read and write** — required to *create* repos |
+| Contents | Read and write |
+| Metadata | Read-only (selected automatically) |
+
+Without `Administration: Read and write`, GitHub answers repo creation with
+`403 Resource not accessible by personal access token`. You can add the
+permission to an existing token at
+<https://github.com/settings/personal-access-tokens> — no need to regenerate it.
+
+## Commands
+
+| Command | What it does |
+| --- | --- |
+| `viclix login` | Save your account token (`--token`, `--base-url`, `--github-token`). |
+| `viclix logout` | Remove stored credentials. |
+| `viclix whoami` | Show which account/endpoint you're logged into. |
+| `viclix init` | Register the current repo as a Viclix project and deploy it. |
+| `viclix deploy` | Commit, push and trigger a rebuild (`--full` for a full rebuild). |
+| `viclix hotfix` | Push and fast-sync the container (`-i` reinstall deps, `-nr` no restart). |
+| `viclix status` / `viclix info` | Inspect the project. |
+| `viclix logs-build` / `viclix logs-app` | Tail build / app logs. |
+| `viclix restart` / `viclix sleep` / `viclix start` | Lifecycle controls. |
+| `viclix exec --cmd "..."` | Run a command inside the container. |
+| `viclix pip-install [--packages "a b"]` | Install packages in the container. |
+
+## Databases, env vars & static files
+
+`init` and `deploy` accept the same setup the dashboard wizard offers:
+
+```bash
+# SQLite (file lives in your repo, referenced by path)
+viclix init --db sqlite --sqlite-path ./data/app.db
+
+# SQLite seeded from a local file uploaded out-of-band (large / git-ignored .db)
+viclix init --sqlite-file ./local/app.db          # implies --db upload
+
+# Managed Postgres (credentials injected as DATABASE_URL)
+viclix init --db shared        # or: --db dedicated
+
+# Environment variables (file and/or inline, repeatable)
+viclix init --env-file .env --env DEBUG=false --env TZ=UTC
+
+# Cached static path
+viclix init --static /static/ --cache-max-age 86400
+```
+
+The same flags work on an existing project — `viclix deploy --env-file .env`,
+`--static /assets/`, or `--sqlite-file seed.db` applies the change, then pushes
+and rebuilds so the next build picks it up. `--env` merges with existing keys.
+
+| Flag | Applies to | Meaning |
+| --- | --- | --- |
+| `--db none\|sqlite\|upload\|shared\|dedicated` | init | Database mode. |
+| `--sqlite-path PATH` | init, deploy | Where the .db lives / is written (default `./data/app.db`). |
+| `--sqlite-file FILE` | init, deploy | Upload a local .db out-of-band. |
+| `--env-file FILE` | init, deploy | Load a `.env`. |
+| `--env KEY=VALUE` | init, deploy | Set one var (repeatable). |
+| `--static PREFIX` | init, deploy | Edge-cached static path (e.g. `/static/`). |
+| `--cache-max-age SECONDS` | init, deploy | Cache duration for the static path. |
+
+Per-project state (its API key) is saved to a `.viclix` file in the repo, which
+is git-ignored by default.

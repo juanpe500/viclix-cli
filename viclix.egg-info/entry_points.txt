@@ -1,0 +1,2 @@
+[console_scripts]
+viclix = viclix.cli:main

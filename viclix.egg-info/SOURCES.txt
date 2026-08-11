@@ -1,0 +1,10 @@
+README.md
+pyproject.toml
+viclix/__init__.py
+viclix/cli.py
+viclix.egg-info/PKG-INFO
+viclix.egg-info/SOURCES.txt
+viclix.egg-info/dependency_links.txt
+viclix.egg-info/entry_points.txt
+viclix.egg-info/requires.txt
+viclix.egg-info/top_level.txt

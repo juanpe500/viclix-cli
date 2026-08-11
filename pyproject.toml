@@ -1,0 +1,25 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "viclix"
+version = "0.1.22"
+description = "Official Viclix CLI — deploy and manage Viclix projects from your terminal."
+readme = "README.md"
+requires-python = ">=3.8"
+authors = [{ name = "Sizth, LLC" }]
+keywords = ["viclix", "deploy", "cli", "paas"]
+dependencies = [
+    "requests>=2.20",
+]
+
+[project.urls]
+Homepage = "https://viclix.com"
+Dashboard = "https://dashboard.viclix.com"
+
+[project.scripts]
+viclix = "viclix.cli:main"
+
+[tool.setuptools]
+packages = ["viclix"]
