@@ -14,9 +14,11 @@ model (shown in the footer) and /model opens the dashboard provider page.
 Textual is imported lazily by `launch()` so the rest of the CLI never depends on
 it; a missing install degrades to a friendly message.
 """
+import re
 import json
 import time
 import webbrowser
+from datetime import datetime
 
 import requests
 
@@ -90,7 +92,7 @@ def _build_app(base_url, token, project_id):
     from textual.containers import VerticalScroll, Vertical
     from textual.suggester import SuggestFromList
     from textual.widgets import (
-        Header, Footer, Input, Static, Label, ListView, ListItem, Collapsible,
+        Header, Footer, Input, Static, Label, ListView, ListItem, Collapsible, Markdown,
     )
 
     # Slash-command autocomplete (inline ghost text; → or Tab accepts).
@@ -422,11 +424,17 @@ def _build_app(base_url, token, project_id):
             self.session_id = session_id
             self.run_id = None
             self.busy = False
+            self._iter = ""            # latest "Iteration N/M" seen (folded into thinking)
+            self._prev_at = None       # previous step timestamp (for "Thought for Xs")
+            self._phase = "computing"  # computing → thinking (live indicator)
+            self._think_timer = None
+            self._think_start = 0.0
 
         def compose(self) -> ComposeResult:
             yield Header(show_clock=False)
             yield Static("[dim]▸ your last message will pin here[/]", id="lastmsg")
             yield VerticalScroll(id="log")
+            yield Static("", id="thinking")
             yield Static("[dim]esc cancel turn   ·   ^n sessions   ·   ^q quit   ·   /help[/]",
                          id="keyhints")
             yield PromptInput(placeholder="Type a message…  (/ for commands · ↑ history)",
@@ -467,6 +475,80 @@ def _build_app(base_url, token, project_id):
             self._log().mount(widget)
             self._log().scroll_end(animate=False)
 
+        # ── live "computing/thinking" indicator (animated spinner + elapsed) ──
+        SPINNER = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
+
+        def _start_thinking(self):
+            self._phase = "computing"
+            self._think_start = time.monotonic()
+            th = self.query_one("#thinking", Static)
+            th.display = True
+            if self._think_timer is None:
+                self._think_timer = self.set_interval(0.1, self._tick_think)
+            else:
+                self._think_timer.resume()
+
+        def _tick_think(self):
+            elapsed = time.monotonic() - self._think_start
+            spin = self.SPINNER[int(elapsed * 10) % len(self.SPINNER)]
+            self.query_one("#thinking", Static).update(f"[b]{spin}[/] {self._phase}… {elapsed:.1f}s")
+
+        def _stop_thinking(self):
+            if self._think_timer is not None:
+                self._think_timer.pause()
+            th = self.query_one("#thinking", Static)
+            th.update("")
+            th.display = False
+
+        # ── step rendering (stateful: folds Iteration, Markdown for llm/reply) ──
+        def _step_duration(self, step):
+            """Seconds since the previous step (server timestamps) → 'Thought for Xs'."""
+            cur = None
+            at = step.get("at")
+            if at:
+                try:
+                    cur = datetime.fromisoformat(at)
+                except ValueError:
+                    cur = None
+            dur = None
+            if cur and self._prev_at:
+                secs = (cur - self._prev_at).total_seconds()
+                if 0 <= secs < 3600:
+                    dur = f"{secs:.1f}s"
+            if cur:
+                self._prev_at = cur
+            return dur
+
+        def _add_step(self, step):
+            if self.busy:
+                self._phase = "thinking"
+            kind = step.get("kind")
+            content = (step.get("content") or "").strip()
+            if kind == "status":
+                m = re.match(r"Iteration (\d+)/(\d+)", content)
+                if m:
+                    self._iter = f"{m.group(1)}/{m.group(2)}"   # → right of next 'Thought'
+                    return
+                if content:
+                    self._add(Static(f"[dim]· {_esc(content)}[/]", classes="status"))
+                return
+            if kind == "llm":
+                dur = self._step_duration(step)
+                head = "💭 Thought" + (f" for {dur}" if dur else "")
+                tail = f"   · #{self._iter}" if self._iter else ""
+                self._add(Static(f"[dim]{head}[/][dim]{tail}[/]", classes="think"))
+                if content:
+                    self._add(Markdown(content, classes="mdblock"))
+                return
+            if kind == "reply":
+                self._step_duration(step)
+                if content:
+                    self._add(Markdown(content, classes="mdblock"))
+                return
+            # tool_call / tool_result / error / ask / approval / … keep the nice cards
+            self._step_duration(step)
+            self._add(step_widget(step))
+
         # -- load prior transcript for an existing session --
         def _load_transcript(self):
             def go():
@@ -494,6 +576,8 @@ def _build_app(base_url, token, project_id):
 
         def _render_transcript(self, data):
             last_goal = ""
+            self._iter = ""
+            self._prev_at = None
             for run in data.get("runs", []):
                 goal = (run.get("goal") or "").strip()
                 if goal:
@@ -502,7 +586,7 @@ def _build_app(base_url, token, project_id):
                         self.app.history.append(goal)   # seed ↑ history from the loaded thread
                     self._add(Static(f"[b green]▸ you[/]  {_esc(goal)}", classes="you"))
                 for st in run.get("steps", []):
-                    self._add(step_widget(st))
+                    self._add_step(st)
                 it = run.get("input_tokens") or 0
                 ot = run.get("output_tokens") or 0
                 if it or ot:
@@ -619,6 +703,9 @@ def _build_app(base_url, token, project_id):
         # -- send a message: create run, then poll-stream it --
         def _send(self, goal):
             self.busy = True
+            self._iter = ""
+            self._prev_at = None
+            self._start_thinking()
 
             def go():
                 try:
@@ -657,7 +744,7 @@ def _build_app(base_url, token, project_id):
                     data = pr.json()
                     for st in data.get("steps", []):
                         since = max(since, st.get("idx", since))
-                        self.app.call_from_thread(self._add, step_widget(st))
+                        self.app.call_from_thread(self._add_step, st)
                     if data.get("status") in TERMINAL:
                         # run.cost is only finalized by the billing path → compute
                         # from the model's price when it's zero/missing.
@@ -746,6 +833,7 @@ def _build_app(base_url, token, project_id):
         def _turn_done(self, data):
             self.busy = False
             self.run_id = None
+            self._stop_thinking()
             self._acc_usage(data)
             it = data.get("input_tokens") or 0
             ot = data.get("output_tokens") or 0
@@ -767,6 +855,7 @@ def _build_app(base_url, token, project_id):
         def _turn_error(self, msg):
             self.busy = False
             self.run_id = None
+            self._stop_thinking()
             self._add(Static(f"[b red]✗[/] {_esc(msg)}", classes="error"))
 
     # ── the app ────────────────────────────────────────────────────────────────
@@ -778,7 +867,8 @@ def _build_app(base_url, token, project_id):
         ListView:focus > ListItem.-highlight { background: $primary 35%; }
         #lastmsg { dock: top; height: auto; max-height: 4; padding: 0 1; background: $boost; border-bottom: solid $primary; }
         #log { height: 1fr; padding: 0 1; }
-        #keyhints { height: 1; color: $text-muted; padding: 0 1; }
+        #thinking { height: 1; color: $accent; padding: 0 1; display: none; }
+        .mdblock { margin: 0 0 1 2; }
         #prompt { height: 3; }
         #status { height: 1; color: $text-muted; padding: 0 1; background: $boost; }
         .you { margin: 1 0 0 0; }
