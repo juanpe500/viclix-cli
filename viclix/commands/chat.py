@@ -66,6 +66,43 @@ def _tok_tag(step):
     return ""
 
 
+# Trigger-type badge for maintenance-agent sessions (matches the web AI grid).
+_TRIGGER_BADGE = {
+    "interval": "⏱ scheduled", "cron": "⏱ cron", "event": "⚡ event",
+    "webhook": "🔗 webhook", "manual": "✋ manual",
+}
+
+
+def _ago(iso):
+    """Relative age of a timestamp: '5s ago', '3m ago', '2h ago', '4d ago'."""
+    if not iso:
+        return ""
+    try:
+        dt = datetime.fromisoformat(iso)
+    except (TypeError, ValueError):
+        return ""
+    secs = (datetime.utcnow() - dt).total_seconds()
+    secs = max(0, secs)
+    if secs < 60:
+        return f"{int(secs)}s ago"
+    if secs < 3600:
+        return f"{int(secs // 60)}m ago"
+    if secs < 86400:
+        return f"{int(secs // 3600)}h ago"
+    if secs < 2_592_000:
+        return f"{int(secs // 86400)}d ago"
+    return f"{int(secs // 2_592_000)}mo ago"
+
+
+def _shortdate(iso):
+    if not iso:
+        return ""
+    try:
+        return datetime.fromisoformat(iso).strftime("%Y-%m-%d %H:%M")
+    except (TypeError, ValueError):
+        return str(iso)[:16].replace("T", " ")
+
+
 def cmd_agents_chat(args, cfg):
     """Entry point: launch the interactive chat, or explain if textual is missing."""
     base_url = cfg["base_url"]
@@ -240,11 +277,36 @@ def _build_app(base_url, token, project_id):
         def _fill(self, sessions):
             lv = self.query_one("#sessions", ListView)
             lv.clear()
-            lv.append(ListItem(Label("＋  New chat"), id="new"))
+            lv.append(ListItem(Label("[b]＋  New chat[/]"), id="new"))
             for s in sessions:
-                when = (s.get("updated_at") or "")[:16].replace("T", " ")
-                title = (s.get("title") or "(untitled)").replace("\n", " ")[:70]
-                item = ListItem(Label(f"{_esc(title)}\n[dim]{when}[/]"))
+                title = (s.get("title") or "(untitled)").replace("\n", " ").strip()[:66]
+                trig = s.get("trigger_type")
+                if s.get("kind") == "agent" and trig:
+                    badge = f"[magenta]{_TRIGGER_BADGE.get(trig, '🤖 ' + trig)}[/]"
+                    if s.get("agent_name"):
+                        badge += f" [dim]{_esc(s['agent_name'])}[/]"
+                else:
+                    badge = "[dim]💬 chat[/]"
+                meta = []
+                created = _shortdate(s.get("created_at"))
+                if created:
+                    meta.append(f"[dim]{created}[/]")
+                ago = _ago(s.get("updated_at"))
+                if ago:
+                    meta.append(f"[dim]· last {ago}[/]")
+                model = s.get("model")
+                if model:
+                    meta.append(f"[cyan]{_esc(model.split('/')[-1])}[/]")
+                it = s.get("input_tokens") or 0
+                ctx = s.get("context_length")
+                if it:
+                    meta.append(f"[dim]{_fmtk(it)}/{_fmtk(ctx)} tok[/]" if ctx
+                                else f"[dim]{_fmtk(it)} in[/]")
+                cost = s.get("cost") or 0
+                if cost:
+                    meta.append(f"[green]${cost:.4f}[/]")
+                metaline = "   ".join(meta)
+                item = ListItem(Label(f"{badge}  [b]{_esc(title)}[/]\n    {metaline}"))
                 item.session_id = s.get("id")
                 lv.append(item)
             lv.focus()
@@ -880,6 +942,7 @@ def _build_app(base_url, token, project_id):
         .tool { margin: 0 0 0 2; }
         .total { margin: 0 0 1 0; }
         .hint { padding: 1; color: $text-muted; }
+        #sessions > ListItem { height: auto; padding: 0 0 1 0; }
         ModelPicker { align: center middle; }
         #picker { width: 96%; max-width: 120; height: auto; max-height: 90%;
                   background: $panel; border: thick $primary; padding: 1 2; }
