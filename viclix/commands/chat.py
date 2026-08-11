@@ -33,6 +33,10 @@ MODES = ["plan", "manual", "auto_edit", "full"]
 # redundant for these; write/exec tools keep their two-block rendering.
 MERGE_TOOLS = {"read_file", "read_files", "search_files", "list_files",
                "list_dir", "grep_files", "glob_files", "grep", "exec_command"}
+# Write tools: also one card, but the body KEEPS the written content (the call
+# already shows it); the result only surfaces failures + a ✓/char-count on the
+# title, so the redundant "Wrote … (N chars)" block disappears.
+WRITE_TOOLS = {"write_file", "apply_patch", "create_file", "edit_file"}
 MODE_HELP = {
     "plan": "read-only — explores & answers, never edits/deploys",
     "manual": "builds; every edit & exec waits for your approval",
@@ -60,6 +64,14 @@ def _fmtk(n):
     if n >= 1000:
         return f"{n / 1000:.0f}k"
     return str(n)
+
+
+def _clip_lines(s, n):
+    """Keep at most n lines; append a '(+N more lines)' note when clipped."""
+    lines = str(s or "").splitlines()
+    if len(lines) <= n:
+        return str(s or "")
+    return "\n".join(lines[:n]) + f"\n… (+{len(lines) - n} more lines)"
 
 
 def _result_style(content):
@@ -246,7 +258,10 @@ def _build_app(base_url, token, project_id):
                         break
                 return f"{head}  {_chip(_basename(args['path']) + rng)}"
             if args.get("command"):
-                return f"{head}  [dim]$[/] {_esc(str(args['command'])[:90])}"
+                cmd = str(args["command"])
+                first = cmd.splitlines()[0] if cmd else cmd
+                more = "…" if ("\n" in cmd or len(first) > 120) else ""
+                return f"{head}  [dim]$[/] {_esc(first[:120])}{more}"
             if args.get("query"):
                 extra = ""
                 if args.get("context") is not None:
@@ -767,24 +782,52 @@ def _build_app(base_url, token, project_id):
                     self._add(Markdown(content, classes="mdblock"))
                 return
             tool = step.get("tool") or step.get("tool_name")
-            # Merge tools: one card. The call makes it (title = chips/query/command,
-            # body = args); its result fills the SAME body + tints the card by
-            # success/error when it arrives.
-            if kind == "tool_call" and tool in MERGE_TOOLS:
+            mergeable = tool in MERGE_TOOLS or tool in WRITE_TOOLS
+            # Merge tools → one card. Call makes it (title = chips/query/command,
+            # body = args/content). The result then either fills the body
+            # (read/exec) or just confirms on the title (write), + tints by result.
+            if kind == "tool_call" and mergeable:
                 self._step_duration(step)
                 body = Static(f"[dim]{_esc(_pretty_args(content))}[/]")
                 card = Collapsible(body, title=_summarize("tool_call", tool, content),
                                    collapsed=True, classes="tool")
                 self._add(card)
-                self._pending_tool[tool] = (body, card)
+                self._pending_tool[tool] = (body, card, content)
                 return
-            if kind == "tool_result" and tool in MERGE_TOOLS and tool in self._pending_tool:
+            if kind == "tool_result" and mergeable and tool in self._pending_tool:
                 self._step_duration(step)
-                body, card = self._pending_tool.pop(tool)
-                body.update(_esc((content or "").strip()) or "[dim](no output)[/]")
+                body, card, call_content = self._pending_tool.pop(tool)
                 style = _result_style(content or "")
-                if style:
-                    card.add_class(f"tool-{style}")
+                res = (content or "").strip()
+                if tool in WRITE_TOOLS:
+                    # keep the written content in the body; surface only failures
+                    if style == "err":
+                        body.update(_esc(res))
+                        card.add_class("tool-err")
+                    else:
+                        card.add_class("tool-edit")   # blue = edit, not execution
+                        m = re.search(r"\((\d[\d,]*)\s*chars?\)", content or "")
+                        try:
+                            card.title += f"   [cyan]✓{' ' + m.group(1) + ' chars' if m else ''}[/]"
+                        except Exception:
+                            pass
+                elif tool == "exec_command":
+                    # show the FULL command (up to 20 lines) then its output
+                    try:
+                        cmd = (json.loads(call_content) or {}).get("command", "")
+                    except Exception:
+                        cmd = ""
+                    parts = []
+                    if cmd:
+                        parts.append(f"[dim]$ {_esc(_clip_lines(cmd, 20))}[/]")
+                    parts.append(_esc(res) or "[dim](no output)[/]")
+                    body.update("\n\n".join(parts))
+                    if style:
+                        card.add_class(f"tool-{style}")
+                else:
+                    body.update(_esc(res) or "[dim](no output)[/]")
+                    if style:
+                        card.add_class(f"tool-{style}")
                 return
             # write/exec tools, errors, asks, approvals, unmatched results → 2 cards
             self._step_duration(step)
@@ -1150,6 +1193,7 @@ def _build_app(base_url, token, project_id):
         .ask { margin: 1 0 0 2; }
         .tool { margin: 0 0 0 2; }
         .tool-ok { background: $success 8%; }
+        .tool-edit { background: $primary 12%; }
         .tool-err { background: $error 12%; }
         .total { margin: 0 0 1 0; }
         .hint { padding: 1; color: $text-muted; }
