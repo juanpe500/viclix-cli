@@ -100,6 +100,46 @@ def _build_app(base_url, token, project_id):
         case_sensitive=False,
     )
 
+    class PromptInput(Input):
+        """Input with shell-style history: ↑ recalls previous messages (keep
+        pressing to go further back), ↓ moves forward, restoring the draft at the
+        end. History lives on the app (self.app.history)."""
+
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            self._hist_idx = None    # None = not browsing; else index into app.history
+            self._draft = ""         # what was typed before browsing started
+
+        def on_key(self, event):
+            hist = getattr(self.app, "history", None) or []
+            if event.key == "up":
+                event.stop()
+                event.prevent_default()
+                if not hist:
+                    return
+                if self._hist_idx is None:
+                    self._draft = self.value
+                    self._hist_idx = len(hist) - 1
+                elif self._hist_idx > 0:
+                    self._hist_idx -= 1
+                self.value = hist[self._hist_idx]
+                self.cursor_position = len(self.value)
+            elif event.key == "down":
+                event.stop()
+                event.prevent_default()
+                if self._hist_idx is None:
+                    return
+                self._hist_idx += 1
+                if self._hist_idx >= len(hist):
+                    self._hist_idx = None
+                    self.value = self._draft
+                else:
+                    self.value = hist[self._hist_idx]
+                self.cursor_position = len(self.value)
+            elif event.key not in ("left", "right", "home", "end", "enter"):
+                # any real edit restarts history navigation
+                self._hist_idx = None
+
     dash = _dashboard_base(base_url)
 
     # ── small render helpers (return a widget for one agent step) ────────────
@@ -387,8 +427,8 @@ def _build_app(base_url, token, project_id):
             yield Header(show_clock=False)
             yield Static("[dim]▸ your last message will pin here[/]", id="lastmsg")
             yield VerticalScroll(id="log")
-            yield Input(placeholder="Type a message…  (/ for commands)", id="prompt",
-                        suggester=slash_suggester)
+            yield PromptInput(placeholder="Type a message…  (/ for commands · ↑ history)",
+                              id="prompt", suggester=slash_suggester)
             yield Static(self._status_text(), id="status")
             yield Footer()
 
@@ -444,6 +484,8 @@ def _build_app(base_url, token, project_id):
                 goal = (run.get("goal") or "").strip()
                 if goal:
                     last_goal = goal
+                    if not self.app.history or self.app.history[-1] != goal:
+                        self.app.history.append(goal)   # seed ↑ history from the loaded thread
                     self._add(Static(f"[b green]▸ you[/]  {_esc(goal)}", classes="you"))
                 for st in run.get("steps", []):
                     self._add(step_widget(st))
@@ -455,9 +497,13 @@ def _build_app(base_url, token, project_id):
         # -- input handling --
         def on_input_submitted(self, event):
             text = (event.value or "").strip()
-            self.query_one("#prompt", Input).value = ""
+            inp = self.query_one("#prompt", Input)
+            inp.value = ""
+            inp._hist_idx = None            # reset history browsing on submit
             if not text:
                 return
+            if not self.app.history or self.app.history[-1] != text:
+                self.app.history.append(text)   # shell-style history (skip dupes)
             if text.startswith("/"):
                 self._command(text)
                 return
@@ -514,8 +560,11 @@ def _build_app(base_url, token, project_id):
                 except requests.RequestException:
                     pass
                 for f in favs:
-                    if isinstance(f, dict) and f.get("id") and f.get("context_length"):
-                        self.app.ctx_max_by_model[f["id"]] = f["context_length"]
+                    if isinstance(f, dict) and f.get("id"):
+                        if f.get("context_length"):
+                            self.app.ctx_max_by_model[f["id"]] = f["context_length"]
+                        self.app.price_by_model[f["id"]] = (
+                            f.get("price_in_per_m"), f.get("price_out_per_m"), f.get("context_length"))
                 self.app.call_from_thread(self._show_picker, favs)
             self.run_worker(go, thread=True)
 
@@ -591,6 +640,18 @@ def _build_app(base_url, token, project_id):
                         since = max(since, st.get("idx", since))
                         self.app.call_from_thread(self._add, step_widget(st))
                     if data.get("status") in TERMINAL:
+                        # run.cost is only finalized by the billing path → compute
+                        # from the model's price when it's zero/missing.
+                        pin, pout, _ctx = self._model_info(data.get("model"))
+                        try:
+                            cost = float(data.get("cost") or 0)
+                        except (TypeError, ValueError):
+                            cost = 0.0
+                        if not cost and (pin is not None or pout is not None):
+                            it = data.get("input_tokens") or 0
+                            ot = data.get("output_tokens") or 0
+                            cost = (it * (pin or 0) + ot * (pout or 0)) / 1_000_000
+                        data["_computed_cost"] = cost
                         self.app.call_from_thread(self._turn_done, data)
                         return
                     time.sleep(1.2)
@@ -605,16 +666,46 @@ def _build_app(base_url, token, project_id):
             self._add(Static("[dim]· working…[/]", classes="status"))
             self._refresh_status()
 
+        def _model_info(self, model):
+            """(price_in_per_m, price_out_per_m, context_length) for a model,
+            fetched + cached. Safe to call from a worker thread; also seeds
+            ctx_max_by_model so the context-window % works for any model."""
+            if not model or "/" not in model:
+                return (None, None, None)
+            cache = self.app.price_by_model
+            if model in cache:
+                return cache[model]
+            info = (None, None, None)
+            try:
+                url = (_tok_url(base_url, "projects/agent/model-info", token, project_id)
+                       + f"&id={requests.utils.quote(model)}")
+                r = requests.get(url, timeout=15)
+                if r.status_code == 200:
+                    d = r.json() or {}
+                    info = (d.get("price_in_per_m"), d.get("price_out_per_m"), d.get("context_length"))
+                    if d.get("context_length"):
+                        self.app.ctx_max_by_model[model] = d["context_length"]
+            except requests.RequestException:
+                pass
+            cache[model] = info
+            return info
+
         def _acc_usage(self, run):
             """Fold one run's tokens/cost into the session totals + per-model table."""
             a = self.app
             model = run.get("model") or "default"
             i = run.get("input_tokens") or 0
             o = run.get("output_tokens") or 0
-            try:
-                c = float(run.get("cost") or 0)
-            except (TypeError, ValueError):
-                c = 0.0
+            c = run.get("_computed_cost")
+            if c is None:
+                try:
+                    c = float(run.get("cost") or 0)
+                except (TypeError, ValueError):
+                    c = 0.0
+                if not c:   # run.cost unfinalized → compute from cached price
+                    pin, pout, _ = a.price_by_model.get(model, (None, None, None))
+                    if pin is not None or pout is not None:
+                        c = (i * (pin or 0) + o * (pout or 0)) / 1_000_000
             u = a.usage_by_model.setdefault(model, {"msgs": 0, "in": 0, "out": 0, "cost": 0.0})
             u["msgs"] += 1
             u["in"] += i
@@ -635,10 +726,12 @@ def _build_app(base_url, token, project_id):
             it = data.get("input_tokens") or 0
             ot = data.get("output_tokens") or 0
             model = data.get("model") or self.app.model
-            try:
-                cost = float(data.get("cost") or 0)
-            except (TypeError, ValueError):
-                cost = 0.0
+            cost = data.get("_computed_cost")
+            if cost is None:
+                try:
+                    cost = float(data.get("cost") or 0)
+                except (TypeError, ValueError):
+                    cost = 0.0
             status = data.get("status")
             if status not in ("done", "chat"):
                 tag = {"error": "[red]", "cancelled": "[yellow]"}.get(status, "[dim]")
@@ -696,6 +789,8 @@ def _build_app(base_url, token, project_id):
             self.ctx_used = 0                 # latest run's input tokens ≈ context size
             self.usage_by_model = {}          # model -> {msgs, in, out, cost}
             self.ctx_max_by_model = {}        # model -> context_length (from favorites)
+            self.price_by_model = {}          # model -> (price_in_per_m, price_out_per_m, ctx)
+            self.history = []                 # shell-style input history (↑/↓ recall)
 
         def on_mount(self):
             self.push_screen(SessionPicker())
