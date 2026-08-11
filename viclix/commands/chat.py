@@ -427,10 +427,11 @@ def _build_app(base_url, token, project_id):
             yield Header(show_clock=False)
             yield Static("[dim]▸ your last message will pin here[/]", id="lastmsg")
             yield VerticalScroll(id="log")
+            yield Static("[dim]esc cancel turn   ·   ^n sessions   ·   ^q quit   ·   /help[/]",
+                         id="keyhints")
             yield PromptInput(placeholder="Type a message…  (/ for commands · ↑ history)",
                               id="prompt", suggester=slash_suggester)
             yield Static(self._status_text(), id="status")
-            yield Footer()
 
         def _set_last(self, text):
             """Pin the user's most recent message at the top so it's always visible."""
@@ -475,6 +476,19 @@ def _build_app(base_url, token, project_id):
                     data = r.json() if r.status_code == 200 else {}
                 except requests.RequestException:
                     data = {}
+                # Enrich every prior run with a computed cost (price lookup, cached)
+                # so history shows $ per turn, exactly like the web UI.
+                for run in data.get("runs", []):
+                    pin, pout, _ctx = self._model_info(run.get("model"))
+                    try:
+                        c = float(run.get("cost") or 0)
+                    except (TypeError, ValueError):
+                        c = 0.0
+                    if not c and (pin is not None or pout is not None):
+                        it = run.get("input_tokens") or 0
+                        ot = run.get("output_tokens") or 0
+                        c = (it * (pin or 0) + ot * (pout or 0)) / 1_000_000
+                    run["_computed_cost"] = c
                 self.app.call_from_thread(self._render_transcript, data)
             self.run_worker(go, thread=True)
 
@@ -489,6 +503,11 @@ def _build_app(base_url, token, project_id):
                     self._add(Static(f"[b green]▸ you[/]  {_esc(goal)}", classes="you"))
                 for st in run.get("steps", []):
                     self._add(step_widget(st))
+                it = run.get("input_tokens") or 0
+                ot = run.get("output_tokens") or 0
+                if it or ot:
+                    self._add(self._total_line(it, ot, run.get("_computed_cost") or 0,
+                                               run.get("model") or "default"))
                 self._acc_usage(run)
             if last_goal:
                 self._set_last(last_goal)
@@ -719,6 +738,11 @@ def _build_app(base_url, token, project_id):
             if model != "default":
                 a.model = model
 
+        def _total_line(self, it, ot, cost, model):
+            costtxt = f" · [green]${cost:.4f}[/]" if cost else ""
+            return Static(f"[b]Total[/] [cyan]{_fmtk(it)} in[/] · [yellow]{_fmtk(ot)} out[/]"
+                          f"{costtxt}   [dim]{_esc(model)}[/]", classes="total")
+
         def _turn_done(self, data):
             self.busy = False
             self.run_id = None
@@ -736,9 +760,7 @@ def _build_app(base_url, token, project_id):
             if status not in ("done", "chat"):
                 tag = {"error": "[red]", "cancelled": "[yellow]"}.get(status, "[dim]")
                 self._add(Static(f"{tag}· {_esc(status)}[/]", classes="status"))
-            costtxt = f" · [green]${cost:.4f}[/]" if cost else ""
-            self._add(Static(f"[b]Total[/] [cyan]{_fmtk(it)} in[/] · [yellow]{_fmtk(ot)} out[/]"
-                             f"{costtxt}   [dim]{_esc(model)}[/]", classes="total"))
+            self._add(self._total_line(it, ot, cost, model))
             self._refresh_status()
             self.query_one("#prompt", Input).focus()
 
@@ -756,8 +778,9 @@ def _build_app(base_url, token, project_id):
         ListView:focus > ListItem.-highlight { background: $primary 35%; }
         #lastmsg { dock: top; height: auto; max-height: 4; padding: 0 1; background: $boost; border-bottom: solid $primary; }
         #log { height: 1fr; padding: 0 1; }
-        #prompt { dock: bottom; }
-        #status { dock: bottom; height: 1; color: $text-muted; padding: 0 1; }
+        #keyhints { height: 1; color: $text-muted; padding: 0 1; }
+        #prompt { height: 3; }
+        #status { height: 1; color: $text-muted; padding: 0 1; background: $boost; }
         .you { margin: 1 0 0 0; }
         .reply { margin: 0 0 0 2; }
         .think { margin: 0 0 0 2; }
