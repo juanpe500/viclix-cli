@@ -38,6 +38,9 @@ MERGE_TOOLS = {"read_file", "read_files", "search_files", "list_files",
 # already shows it); the result only surfaces failures + a ✓/char-count on the
 # title, so the redundant "Wrote … (N chars)" block disappears.
 WRITE_TOOLS = {"write_file", "apply_patch", "create_file", "edit_file"}
+# Control-flow tools with dedicated step-kind rendering (ask card, reply markdown,
+# done total). Their tool_call/tool_result rows are redundant → never rendered.
+SILENT_TOOLS = {"ask", "request_env_access", "reply", "done"}
 MODE_HELP = {
     "plan": "read-only — explores & answers, never edits/deploys",
     "manual": "builds; every edit & exec waits for your approval",
@@ -928,6 +931,11 @@ def _build_app(base_url, token, project_id):
                 self._pending_ask = card
                 return
             tool = step.get("tool") or step.get("tool_name")
+            # Control-flow tools render via their own step kind (ask / reply / done);
+            # their raw call+result rows are pure noise next to that card — drop them.
+            if tool in SILENT_TOOLS and kind in ("tool_call", "tool_result"):
+                self._step_duration(step)
+                return
             mergeable = tool in MERGE_TOOLS or tool in WRITE_TOOLS
             dur = self._step_duration(step)   # advance the timeline once per step
             # A tool_call may carry the iteration's LLM usage (when the model
@@ -1411,7 +1419,7 @@ def _build_app(base_url, token, project_id):
         .error { margin: 0 0 0 2; }
         .ask { margin: 1 0 0 2; }
         /* Interactive clarifying-question card (yellow accent, like the web). */
-        .askcard { margin: 1 0 0 2; padding: 0 1; height: auto;
+        .askcard { margin: 1 0 1 2; padding: 0 1 1 1; height: auto;
                    background: $warning 8%; border-left: thick $warning; }
         .askq { margin: 0 0 1 0; }
         .askmeta { color: $text-muted; }
