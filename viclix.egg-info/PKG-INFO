@@ -1,6 +1,6 @@
 Metadata-Version: 2.4
 Name: viclix
-Version: 0.1.22
+Version: 0.1.26
 Summary: Official Viclix CLI — deploy and manage Viclix projects from your terminal.
 Author: Sizth, LLC
 Project-URL: Homepage, https://viclix.com
@@ -9,6 +9,8 @@ Keywords: viclix,deploy,cli,paas
 Requires-Python: >=3.8
 Description-Content-Type: text/markdown
 Requires-Dist: requests>=2.20
+Requires-Dist: questionary>=1.10
+Requires-Dist: textual>=0.60
 
 # viclix
 
