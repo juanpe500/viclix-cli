@@ -892,6 +892,11 @@ def _build_app(base_url, token, project_id):
                     # Every iteration gets a thought header — even ones that only
                     # run a tool (no llm prose). The iteration's llm, if any,
                     # enriches THIS header with tokens/cost + prose below.
+                    # Seed the timeline at the iteration's start so its llm/tool step
+                    # measures pure thinking time ("Thought for Xs") — including the
+                    # very first iteration, which otherwise had no prior step to
+                    # measure from (matching the web's per-iteration timing).
+                    self._step_duration(step)
                     self._iter = f"{m.group(1)}/{m.group(2)}"
                     self._iter_header = Static(self._thought_header(), classes="think")
                     self._add(self._iter_header)
@@ -931,11 +936,6 @@ def _build_app(base_url, token, project_id):
                 self._pending_ask = card
                 return
             tool = step.get("tool") or step.get("tool_name")
-            # Control-flow tools render via their own step kind (ask / reply / done);
-            # their raw call+result rows are pure noise next to that card — drop them.
-            if tool in SILENT_TOOLS and kind in ("tool_call", "tool_result"):
-                self._step_duration(step)
-                return
             mergeable = tool in MERGE_TOOLS or tool in WRITE_TOOLS
             dur = self._step_duration(step)   # advance the timeline once per step
             # A tool_call may carry the iteration's LLM usage (when the model
@@ -947,6 +947,12 @@ def _build_app(base_url, token, project_id):
                 if _i or _o:
                     self._iter_header.update(self._thought_header(dur, _i, _o))
                     self._iter_header = None
+            # Control-flow tools render via their own step kind (ask / reply / done);
+            # their raw call+result rows are pure noise next to that card — drop them,
+            # but only AFTER the enrichment above: the ask tool_call is what carries
+            # the iteration's tokens/timing (there's no separate llm step).
+            if tool in SILENT_TOOLS and kind in ("tool_call", "tool_result"):
+                return
             # Merge tools → one card. Call makes it (title = chips/query/command,
             # body = args/content). The result then either fills the body
             # (read/exec) or just confirms on the title (write), + tints by result.

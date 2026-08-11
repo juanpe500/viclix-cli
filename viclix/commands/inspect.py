@@ -229,6 +229,7 @@ ENDPOINTS = {
     'scaling': ('GET', 'projects/scaling'),
     'db-snapshot': ('POST', 'projects/db/snapshot'),
     'db-snapshots': ('GET', 'projects/db/snapshots'),
+    'approvals': ('GET', 'projects/approvals'),
 }
 
 
@@ -250,6 +251,11 @@ def cmd_generic(args, cfg):
             url += f"&level={requests.utils.quote(args.level)}"
     if args.command in ('deploys', 'requests', 'events') and getattr(args, 'limit', 0):
         url += f"&limit={int(args.limit)}"
+    if args.command == 'approvals':
+        if getattr(args, 'status', None):
+            url += f"&status={requests.utils.quote(args.status)}"
+        if getattr(args, 'agent', None):
+            url += f"&agent_id={requests.utils.quote(args.agent)}"
 
     if method == 'GET':
         response = requests.get(url)

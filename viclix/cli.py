@@ -28,7 +28,8 @@ from .commands.inspect import (
     cmd_exec, cmd_pip_install, cmd_db, cmd_fs_read, cmd_rollback,
     cmd_env_setunset, cmd_probe, cmd_db_restore_exec, cmd_generic,
 )
-from .commands.agents import cmd_agent_run_status, cmd_agents, cmd_fleet
+from .commands.agents import (cmd_agent_run_status, cmd_agents, cmd_fleet,
+                              cmd_approve_reject, cmd_fan_out)
 
 
 
@@ -49,6 +50,7 @@ COMMANDS = [
     'probe', 'domains', 'scaling',
     'db-snapshot', 'db-snapshots', 'db-restore', 'db-exec',
     'agent-run', 'agent-status', 'agents', 'fleet',
+    'approvals', 'approve', 'reject', 'fan-out',
 ]
 
 EPILOG = """\
@@ -76,6 +78,10 @@ commands:
   pip-install                install packages in the container
   agents                     interactive AI chat for this project (full-screen TUI; --json dumps the list)
   fleet                      list this project's deployed maintenance agents
+  approvals                  list actions a maintenance agent is waiting to run (--status all for every state)
+  approve / reject           approve <id> (runs it) or reject <id> a proposed agent action
+  agent-run "goal" [--wait]  headless coding run in THIS project (--wait polls to done; --mode plan|full)
+  fan-out "goal" --projects a,b,c    launch the same coding run across many projects (--wait waits for all)
   skill                      print the CLI usage guide (for an AI driving the CLI)
 
 examples:
@@ -174,6 +180,10 @@ def build_parser():
     g_logs.add_argument('--method', help='probe: HTTP method (default GET)')
     g_logs.add_argument('--data', help='probe: request body')
     g_logs.add_argument('--mode', help='agent-run: plan(read-only, default)|manual|auto_edit|full')
+    g_logs.add_argument('--status', help='approvals: filter by status (pending, default; approved, '
+                                         'rejected, executed, expired, all)')
+    g_logs.add_argument('--agent', help='approvals: filter to one agent id')
+    g_logs.add_argument('--projects', help='fan-out: comma-separated project ids to run the goal on')
     g_logs.add_argument('--json', action='store_true',
                         help='agents: dump the raw conversation list instead of the interactive picker')
 
@@ -349,6 +359,12 @@ def main():
         return
     if args.command == 'fleet':
         cmd_fleet(args, cfg)
+        return
+    if args.command in ('approve', 'reject'):
+        cmd_approve_reject(args, cfg)
+        return
+    if args.command == 'fan-out':
+        cmd_fan_out(args, cfg)
         return
 
     # Everything else is a simple GET/POST against the endpoint table.
