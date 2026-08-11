@@ -869,11 +869,20 @@ def _build_app(base_url, token, project_id):
                 return
             tool = step.get("tool") or step.get("tool_name")
             mergeable = tool in MERGE_TOOLS or tool in WRITE_TOOLS
+            dur = self._step_duration(step)   # advance the timeline once per step
+            # A tool_call may carry the iteration's LLM usage (when the model
+            # emitted a tool directly, with no separate llm step) — enrich this
+            # iteration's thought header with those tokens + thinking time.
+            if kind == "tool_call" and self._iter_header is not None:
+                _i = step.get("input_tokens") or 0
+                _o = step.get("output_tokens") or 0
+                if _i or _o:
+                    self._iter_header.update(self._thought_header(dur, _i, _o))
+                    self._iter_header = None
             # Merge tools → one card. Call makes it (title = chips/query/command,
             # body = args/content). The result then either fills the body
             # (read/exec) or just confirms on the title (write), + tints by result.
             if kind == "tool_call" and mergeable:
-                self._step_duration(step)
                 if tool == "apply_patch":
                     body = Static(_render_patch(_extract_patch(content)), classes="patchbody")
                 elif tool in WRITE_TOOLS:
@@ -886,7 +895,6 @@ def _build_app(base_url, token, project_id):
                 self._pending_tool[tool] = (body, card, content)
                 return
             if kind == "tool_result" and mergeable and tool in self._pending_tool:
-                self._step_duration(step)
                 body, card, call_content = self._pending_tool.pop(tool)
                 style = _result_style(content or "")
                 res = (content or "").strip()
@@ -946,7 +954,6 @@ def _build_app(base_url, token, project_id):
                         card.add_class(f"tool-{style}")
                 return
             # write/exec tools, errors, asks, approvals, unmatched results → 2 cards
-            self._step_duration(step)
             self._add(step_widget(step))
 
         # -- load prior transcript for an existing session --
