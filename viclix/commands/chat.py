@@ -32,7 +32,7 @@ MODES = ["plan", "manual", "auto_edit", "full"]
 # chips/query, body = the result once the ← response arrives). Two blocks are
 # redundant for these; write/exec tools keep their two-block rendering.
 MERGE_TOOLS = {"read_file", "read_files", "search_files", "list_files",
-               "list_dir", "grep_files", "glob_files", "grep"}
+               "list_dir", "grep_files", "glob_files", "grep", "exec_command"}
 MODE_HELP = {
     "plan": "read-only — explores & answers, never edits/deploys",
     "manual": "builds; every edit & exec waits for your approval",
@@ -60,6 +60,19 @@ def _fmtk(n):
     if n >= 1000:
         return f"{n / 1000:.0f}k"
     return str(n)
+
+
+def _result_style(content):
+    """Classify a tool result → 'ok' | 'err' | None, to tint the card."""
+    c = str(content or "")
+    m = re.search(r"exit code:\s*(-?\d+)", c, re.IGNORECASE)
+    if m:
+        return "ok" if m.group(1) == "0" else "err"
+    low = c.lower()
+    if "✗" in c or "traceback (most recent call last)" in low or "denied by user" in low \
+            or low.startswith("error") or "\nerror" in low:
+        return "err"
+    return None
 
 
 def _fmtn(n):
@@ -754,19 +767,24 @@ def _build_app(base_url, token, project_id):
                     self._add(Markdown(content, classes="mdblock"))
                 return
             tool = step.get("tool") or step.get("tool_name")
-            # Read-only tools: one card. The call makes it (title = chips/query,
-            # body = args); its result fills the SAME body when it arrives.
+            # Merge tools: one card. The call makes it (title = chips/query/command,
+            # body = args); its result fills the SAME body + tints the card by
+            # success/error when it arrives.
             if kind == "tool_call" and tool in MERGE_TOOLS:
                 self._step_duration(step)
                 body = Static(f"[dim]{_esc(_pretty_args(content))}[/]")
-                self._add(Collapsible(body, title=_summarize("tool_call", tool, content),
-                                      collapsed=True, classes="tool"))
-                self._pending_tool[tool] = body
+                card = Collapsible(body, title=_summarize("tool_call", tool, content),
+                                   collapsed=True, classes="tool")
+                self._add(card)
+                self._pending_tool[tool] = (body, card)
                 return
             if kind == "tool_result" and tool in MERGE_TOOLS and tool in self._pending_tool:
                 self._step_duration(step)
-                body = self._pending_tool.pop(tool)
+                body, card = self._pending_tool.pop(tool)
                 body.update(_esc((content or "").strip()) or "[dim](no output)[/]")
+                style = _result_style(content or "")
+                if style:
+                    card.add_class(f"tool-{style}")
                 return
             # write/exec tools, errors, asks, approvals, unmatched results → 2 cards
             self._step_duration(step)
@@ -1131,6 +1149,8 @@ def _build_app(base_url, token, project_id):
         .error { margin: 0 0 0 2; }
         .ask { margin: 1 0 0 2; }
         .tool { margin: 0 0 0 2; }
+        .tool-ok { background: $success 8%; }
+        .tool-err { background: $error 12%; }
         .total { margin: 0 0 1 0; }
         .hint { padding: 1; color: $text-muted; }
         #sessions > ListItem { height: auto; padding: 0 0 1 0; }
