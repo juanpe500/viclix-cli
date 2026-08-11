@@ -231,28 +231,34 @@ def _build_app(base_url, token, project_id):
                     ctx = f.get("context_length")
                     if ctx:
                         try:
-                            meta.append(f"{int(ctx) // 1000}k ctx")
+                            meta.append(f"[cyan]{int(ctx) // 1000}k[/][dim] ctx[/]")
                         except (TypeError, ValueError):
                             pass
                     pin, pout = f.get("price_in_per_m"), f.get("price_out_per_m")
                     if pin is not None or pout is not None:
-                        meta.append(f"${pin if pin is not None else '?'}/${pout if pout is not None else '?'} per M")
-                    tail = ("   [dim]" + _esc(" · ".join(meta)) + "[/]") if meta else ""
-                    label = f"{_esc(name)}   [dim]{_esc(mid)}[/]{tail}"
+                        pin_s = f"${pin}" if pin is not None else "$?"
+                        pout_s = f"${pout}" if pout is not None else "$?"
+                        meta.append(f"[green]{pin_s}[/][dim]/[/][yellow]{pout_s}[/][dim] per M[/]")
+                    if f.get("supports_reasoning"):
+                        meta.append("[magenta]🧠 reasoning[/]")
+                    metaline = "   ".join(meta)
+                    mark = "[green]●[/] " if mid == self.current else "  "
+                    label = (f"{mark}[b]{_esc(name)}[/]\n"
+                             f"    [dim]{_esc(mid)}[/]" + (f"    {metaline}" if metaline else ""))
                 else:
                     mid = str(f)
-                    label = _esc(mid)
-                mark = "● " if mid == self.current else "  "
-                li = ListItem(Label(f"{mark}{label}"))
+                    mark = "[green]●[/] " if mid == self.current else "  "
+                    label = f"{mark}[b]{_esc(mid)}[/]"
+                li = ListItem(Label(label))
                 li.model_id = mid
                 li.is_open = False
                 items.append(li)
-            openitem = ListItem(Label("🌐  Open model selector in browser…"))
+            openitem = ListItem(Label("🌐  [b]Open model selector in browser…[/]"))
             openitem.model_id = None
             openitem.is_open = True
             items.append(openitem)
             yield Vertical(
-                Label("[b]Choose a model[/]   [dim](↑↓ Enter · Esc to close)[/]"),
+                Label("[b]Choose a model[/]   [dim](↑↓ · Enter · Esc to close)[/]"),
                 ListView(*items, id="models"),
                 id="picker",
             )
@@ -656,9 +662,10 @@ def _build_app(base_url, token, project_id):
         .total { margin: 0 0 1 0; }
         .hint { padding: 1; color: $text-muted; }
         ModelPicker { align: center middle; }
-        #picker { width: 84; max-width: 90%; height: auto; max-height: 80%;
+        #picker { width: 96%; max-width: 120; height: auto; max-height: 90%;
                   background: $panel; border: thick $primary; padding: 1 2; }
-        #picker ListView { height: auto; max-height: 22; margin-top: 1; }
+        #picker ListView { height: auto; max-height: 30; margin-top: 1; }
+        #picker ListView > ListItem { height: auto; padding: 0 0 1 0; }
         UsageModal { align: center middle; }
         #usagebox { width: 74; max-width: 90%; height: auto; background: $panel;
                     border: thick $primary; padding: 1 2; }
