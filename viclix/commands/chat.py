@@ -1276,6 +1276,10 @@ def _build_app(base_url, token, project_id):
         .error { margin: 0 0 0 2; }
         .ask { margin: 1 0 0 2; }
         .tool { margin: 0 0 0 2; }
+        /* Make the whole title bar clickable (not just the text) + hover feedback,
+           so a tool card toggles from anywhere along its row. */
+        CollapsibleTitle { width: 1fr; }
+        CollapsibleTitle:hover { background: $boost; }
         .tool-ok { background: $success 8%; }
         .tool-edit { background: $primary 12%; }
         .tool-err { background: $error 12%; }
