@@ -64,8 +64,8 @@ def _build_app(base_url, token, project_id):
     """Construct the Textual app. Imports live here so importing this module (and
     the CLI as a whole) never requires textual until the chat is actually used."""
     from textual.app import App, ComposeResult
-    from textual.screen import Screen
-    from textual.containers import VerticalScroll
+    from textual.screen import Screen, ModalScreen
+    from textual.containers import VerticalScroll, Vertical
     from textual.widgets import (
         Header, Footer, Input, Static, Label, ListView, ListItem, Collapsible,
     )
@@ -182,6 +182,65 @@ def _build_app(base_url, token, project_id):
             sid = None if item.id == "new" else getattr(item, "session_id", None)
             self.app.open_chat(sid)
 
+    # ── model picker (modal): favorites list + "open selector" as the last item ─
+    class ModelPicker(ModalScreen):
+        BINDINGS = [("escape", "dismiss", "Close")]
+
+        def __init__(self, favorites, current):
+            super().__init__()
+            self.favorites = favorites or []
+            self.current = current
+
+        def compose(self) -> ComposeResult:
+            items = []
+            for f in self.favorites:
+                if isinstance(f, dict):
+                    mid = f.get("id") or ""
+                    name = f.get("name") or mid
+                    meta = []
+                    ctx = f.get("context_length")
+                    if ctx:
+                        try:
+                            meta.append(f"{int(ctx) // 1000}k ctx")
+                        except (TypeError, ValueError):
+                            pass
+                    pin, pout = f.get("price_in_per_m"), f.get("price_out_per_m")
+                    if pin is not None or pout is not None:
+                        meta.append(f"${pin if pin is not None else '?'}/${pout if pout is not None else '?'} per M")
+                    tail = ("   [dim]" + _esc(" · ".join(meta)) + "[/]") if meta else ""
+                    label = f"{_esc(name)}   [dim]{_esc(mid)}[/]{tail}"
+                else:
+                    mid = str(f)
+                    label = _esc(mid)
+                mark = "● " if mid == self.current else "  "
+                li = ListItem(Label(f"{mark}{label}"))
+                li.model_id = mid
+                li.is_open = False
+                items.append(li)
+            openitem = ListItem(Label("🌐  Open model selector in browser…"))
+            openitem.model_id = None
+            openitem.is_open = True
+            items.append(openitem)
+            yield Vertical(
+                Label("[b]Choose a model[/]   [dim](↑↓ Enter · Esc to close)[/]"),
+                ListView(*items, id="models"),
+                id="picker",
+            )
+
+        def on_mount(self):
+            self.query_one("#models", ListView).focus()
+
+        def on_list_view_selected(self, event):
+            item = event.item
+            if getattr(item, "is_open", False):
+                try:
+                    webbrowser.open(f"{dash}/settings/ai-providers")
+                except Exception:
+                    pass
+                self.dismiss(None)
+            else:
+                self.dismiss(getattr(item, "model_id", None))
+
     # ── chat screen ───────────────────────────────────────────────────────────
     class ChatScreen(Screen):
         BINDINGS = [
@@ -292,13 +351,7 @@ def _build_app(base_url, token, project_id):
                 else:
                     self._add(Static("[dim]usage: /mode plan|manual|auto_edit|full[/]", classes="status"))
             elif cmd == "/model":
-                url = f"{dash}/ai-providers"
-                try:
-                    webbrowser.open(url)
-                except Exception:
-                    pass
-                self._add(Static(f"[dim]model favorites live in the dashboard for now: {url}\n"
-                                 f"(a native /model picker is coming next)[/]", classes="status"))
+                self._open_model_picker()
             elif cmd == "/new":
                 self.app.open_chat(None)
             elif cmd == "/sessions":
@@ -307,6 +360,27 @@ def _build_app(base_url, token, project_id):
                 self.app.exit()
             else:
                 self._add(Static(f"[dim]unknown command {_esc(cmd)} — /help[/]", classes="status"))
+
+        def _open_model_picker(self):
+            def go():
+                favs = []
+                try:
+                    r = requests.get(_tok_url(base_url, "projects/agent/models/favorites",
+                                              token, project_id), timeout=15)
+                    if r.status_code == 200:
+                        favs = (r.json() or {}).get("favorites", [])
+                except requests.RequestException:
+                    pass
+                self.app.call_from_thread(self._show_picker, favs)
+            self.run_worker(go, thread=True)
+
+        def _show_picker(self, favs):
+            def done(model):
+                if model:
+                    self.app.model = model
+                    self._refresh_status()
+                    self._add(Static(f"[dim]model → {_esc(model)}[/]", classes="status"))
+            self.app.push_screen(ModelPicker(favs, self.app.model), done)
 
         def action_cancel(self):
             if self.busy and self.run_id:
@@ -333,6 +407,10 @@ def _build_app(base_url, token, project_id):
                     body = {"goal": goal, "mode": self.app.mode}
                     if self.session_id:
                         body["session_id"] = self.session_id
+                    # Send a picked model (a real provider/model id) — the server
+                    # honors it only if it's in the user's favorites.
+                    if self.app.model and "/" in self.app.model:
+                        body["model"] = self.app.model
                     r = requests.post(_tok_url(base_url, "projects/agent/runs", token, project_id),
                                       json=body, timeout=30)
                     if r.status_code not in (200, 201):
@@ -370,7 +448,7 @@ def _build_app(base_url, token, project_id):
             self.run_id = run_id
             if session_id:
                 self.session_id = session_id
-            if model and model != "user-default (locked)":
+            if model and "/" in model:   # a real provider/model id (not "user-default")
                 self.app.model = model
             self._add(Static("[dim]· working…[/]", classes="status"))
             self._refresh_status()
@@ -412,6 +490,10 @@ def _build_app(base_url, token, project_id):
         .ask { margin: 1 0 0 2; }
         .tool { margin: 0 0 0 2; }
         .hint { padding: 1; color: $text-muted; }
+        ModelPicker { align: center middle; }
+        #picker { width: 84; max-width: 90%; height: auto; max-height: 80%;
+                  background: $panel; border: thick $primary; padding: 1 2; }
+        #picker ListView { height: auto; max-height: 22; margin-top: 1; }
         """
         TITLE = "viclix agents"
 
