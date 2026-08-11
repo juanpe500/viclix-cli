@@ -198,10 +198,16 @@ def _build_app(base_url, token, project_id):
 
         def compose(self) -> ComposeResult:
             yield Header(show_clock=False)
+            yield Static("[dim]▸ your last message will pin here[/]", id="lastmsg")
             yield VerticalScroll(id="log")
             yield Input(placeholder="Type a message…  (/help for commands)", id="prompt")
             yield Static(self._status_text(), id="status")
             yield Footer()
+
+        def _set_last(self, text):
+            """Pin the user's most recent message at the top so it's always visible."""
+            t = " ".join((text or "").split())
+            self.query_one("#lastmsg", Static).update(f"[b green]▸ you asked:[/] {_esc(t)}")
 
         def _status_text(self):
             m = self.app.mode
@@ -236,12 +242,16 @@ def _build_app(base_url, token, project_id):
             self.run_worker(go, thread=True)
 
         def _render_transcript(self, data):
+            last_goal = ""
             for run in data.get("runs", []):
                 goal = (run.get("goal") or "").strip()
                 if goal:
+                    last_goal = goal
                     self._add(Static(f"[b green]▸ you[/]  {_esc(goal)}", classes="you"))
                 for st in run.get("steps", []):
                     self._add(step_widget(st))
+            if last_goal:
+                self._set_last(last_goal)
             self._refresh_status()
 
         # -- input handling --
@@ -258,6 +268,7 @@ def _build_app(base_url, token, project_id):
                                  classes="status"))
                 return
             self._add(Static(f"[b green]▸ you[/]  {_esc(text)}", classes="you"))
+            self._set_last(text)
             self._send(text)
 
         def _command(self, text):
@@ -389,6 +400,7 @@ def _build_app(base_url, token, project_id):
     class ViclixChatApp(App):
         CSS = """
         Screen { layout: vertical; }
+        #lastmsg { dock: top; height: auto; max-height: 4; padding: 0 1; background: $boost; border-bottom: solid $primary; }
         #log { height: 1fr; padding: 0 1; }
         #prompt { dock: bottom; }
         #status { dock: bottom; height: 1; color: $text-muted; padding: 0 1; }
