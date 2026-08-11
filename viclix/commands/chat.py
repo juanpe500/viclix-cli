@@ -57,6 +57,14 @@ def _fmtk(n):
     return str(n)
 
 
+def _fmtn(n):
+    """Exact comma-grouped token count (e.g. 5,629) — for per-step/turn detail."""
+    try:
+        return f"{int(n):,}"
+    except (TypeError, ValueError):
+        return "0"
+
+
 def _tok_tag(step):
     """Dim '· <in> in · <out> out' suffix for a step that reports token usage."""
     i = step.get("input_tokens") or 0
@@ -130,11 +138,12 @@ def _build_app(base_url, token, project_id):
     from textual.suggester import SuggestFromList
     from textual.widgets import (
         Header, Footer, Input, Static, Label, ListView, ListItem, Collapsible, Markdown,
+        Checkbox,
     )
 
     # Slash-command autocomplete (inline ghost text; → or Tab accepts).
     slash_suggester = SuggestFromList(
-        ["/help", "/model", "/usage", "/new", "/sessions", "/quit",
+        ["/help", "/model", "/usage", "/show", "/new", "/sessions", "/quit",
          "/mode plan", "/mode manual", "/mode auto_edit", "/mode full"],
         case_sensitive=False,
     )
@@ -182,23 +191,45 @@ def _build_app(base_url, token, project_id):
     dash = _dashboard_base(base_url)
 
     # ── small render helpers (return a widget for one agent step) ────────────
+    def _chip(s):
+        return f"[on #3a3a3a] {_esc(str(s))} [/]"
+
+    def _basename(p):
+        p = str(p)
+        return p.rsplit("/", 1)[-1] if "/" in p else p
+
     def _summarize(kind, tool, content):
-        """One-line, markup-safe title for a collapsible tool card."""
+        """Markup-safe title for a tool card. Parses common args into chips."""
         c = (content or "").strip().replace("\n", " ")
-        if kind == "tool_call":
-            try:
-                targs = json.loads(content)
-                bits = []
-                for k in ("path", "command", "url", "name"):
-                    if k in targs:
-                        bits.append(str(targs[k]))
-                summary = "  ".join(bits) or c[:80]
-            except Exception:
-                summary = c[:80]
-            return _esc(f"→ {tool or 'tool'}  {summary}")
         if kind == "tool_result":
-            return _esc(f"← {tool or 'result'}  {c[:80]}")
-        return _esc(c[:100])
+            return f"[b]← {_esc(tool or 'result')}[/]  {_esc(c[:90])}"
+        # tool_call — turn the JSON args into nice chips / text
+        try:
+            args = json.loads(content)
+        except Exception:
+            args = None
+        head = f"[b]→ {_esc(tool or 'tool')}[/]"
+        if isinstance(args, dict):
+            if isinstance(args.get("paths"), list) and args["paths"]:
+                chips = "  ".join(_chip(_basename(p)) for p in args["paths"][:8])
+                extra = f" [dim]+{len(args['paths']) - 8}[/]" if len(args["paths"]) > 8 else ""
+                return f"{head}  {chips}{extra}"
+            if args.get("path"):
+                rng = ""
+                for a, b in (("start_line", "end_line"), ("start", "end"), ("from_line", "to_line")):
+                    if args.get(a) and args.get(b):
+                        rng = f" {args[a]}-{args[b]}"
+                        break
+                return f"{head}  {_chip(_basename(args['path']) + rng)}"
+            if args.get("command"):
+                return f"{head}  [dim]$[/] {_esc(str(args['command'])[:90])}"
+            if args.get("query"):
+                return f"{head}  [green]\"{_esc(str(args['query'])[:70])}\"[/]"
+            if args.get("url"):
+                return f"{head}  [cyan]{_esc(str(args['url'])[:80])}[/]"
+            if args.get("name"):
+                return f"{head}  {_chip(args['name'])}"
+        return f"{head}  {_esc(c[:80])}"
 
     def step_widget(step):
         kind = step.get("kind")
@@ -440,6 +471,31 @@ def _build_app(base_url, token, project_id):
             eff = self.sel.get(mid)
             self.dismiss({"model": mid, "effort": (eff if eff and eff != "none" else None)})
 
+    # ── display settings (modal): choose what to show, like the web's gear ──────
+    class ShowModal(ModalScreen):
+        BINDINGS = [("escape", "dismiss", "Close")]
+
+        def compose(self) -> ComposeResult:
+            s = self.app.show
+            yield Vertical(
+                Label("[b]Display settings[/]   [dim](Space toggles · Esc applies)[/]"),
+                Checkbox("Tokens & cost on thoughts / steps", s.get("thought_meta", True),
+                         id="cb_thought_meta"),
+                Checkbox("Iteration #  on thoughts", s.get("iter", True), id="cb_iter"),
+                Checkbox("Per-message Total line", s.get("turn_total", True), id="cb_turn_total"),
+                Label("[dim]The session Σ bar (bottom) is always shown.[/]"),
+                id="showbox",
+            )
+
+        def on_mount(self):
+            cbs = self.query(Checkbox)
+            if cbs:
+                cbs.first().focus()
+
+        def on_checkbox_changed(self, event):
+            key = event.checkbox.id.replace("cb_", "")
+            self.app.show[key] = bool(event.value)
+
     # ── usage panel (modal): context window + spend by model + total ────────────
     class UsageModal(ModalScreen):
         BINDINGS = [("escape", "dismiss", "Close"), ("u", "dismiss", "Close")]
@@ -491,6 +547,7 @@ def _build_app(base_url, token, project_id):
             self._phase = "computing"  # computing → thinking (live indicator)
             self._think_timer = None
             self._think_start = 0.0
+            self._cur_model = None     # model of the run currently rendering
 
         def compose(self) -> ComposeResult:
             yield Header(show_clock=False)
@@ -563,6 +620,13 @@ def _build_app(base_url, token, project_id):
             th.display = False
 
         # ── step rendering (stateful: folds Iteration, Markdown for llm/reply) ──
+        def _step_cost(self, i, o):
+            """Per-step USD cost from the current run's model price (cached)."""
+            pin, pout, _c = self.app.price_by_model.get(self._cur_model or "", (None, None, None))
+            if pin is None and pout is None:
+                return None
+            return (i * (pin or 0) + o * (pout or 0)) / 1_000_000
+
         def _step_duration(self, step):
             """Seconds since the previous step (server timestamps) → 'Thought for Xs'."""
             cur = None
@@ -596,9 +660,19 @@ def _build_app(base_url, token, project_id):
                 return
             if kind == "llm":
                 dur = self._step_duration(step)
-                head = "💭 Thought" + (f" for {dur}" if dur else "")
-                tail = f"   · #{self._iter}" if self._iter else ""
-                self._add(Static(f"[dim]{head}[/][dim]{tail}[/]", classes="think"))
+                parts = ["💭 Thought" + (f" for {dur}" if dur else "")]
+                if self.app.show.get("thought_meta"):
+                    i = step.get("input_tokens") or 0
+                    o = step.get("output_tokens") or 0
+                    if i or o:
+                        seg = f"{_fmtn(i)} in · {_fmtn(o)} out"
+                        c = self._step_cost(i, o)
+                        if c:
+                            seg += f" · ${c:.4f}"
+                        parts.append(seg)
+                if self.app.show.get("iter") and self._iter:
+                    parts.append(f"#{self._iter}")
+                self._add(Static("[dim]" + _esc("   ·   ".join(parts)) + "[/]", classes="think"))
                 if content:
                     self._add(Markdown(content, classes="mdblock"))
                 return
@@ -612,6 +686,19 @@ def _build_app(base_url, token, project_id):
             self._add(step_widget(step))
 
         # -- load prior transcript for an existing session --
+        def _reload(self):
+            """Re-render the current session from the server (used after /show so
+            display changes apply to the whole transcript). Resets session usage
+            so the Σ totals recompute cleanly."""
+            if not self.session_id:
+                return
+            self._log().remove_children()
+            a = self.app
+            a.usage_by_model, a.tok_in, a.tok_out, a.cost, a.ctx_used = {}, 0, 0, 0.0, 0
+            self._iter, self._prev_at, self._cur_model = "", None, None
+            self._refresh_status()
+            self._load_transcript()
+
         def _load_transcript(self):
             def go():
                 try:
@@ -641,6 +728,7 @@ def _build_app(base_url, token, project_id):
             self._iter = ""
             self._prev_at = None
             for run in data.get("runs", []):
+                self._cur_model = run.get("model")
                 goal = (run.get("goal") or "").strip()
                 if goal:
                     last_goal = goal
@@ -649,11 +737,12 @@ def _build_app(base_url, token, project_id):
                     self._add(Static(f"[b green]▸ you[/]  {_esc(goal)}", classes="you"))
                 for st in run.get("steps", []):
                     self._add_step(st)
-                it = run.get("input_tokens") or 0
-                ot = run.get("output_tokens") or 0
-                if it or ot:
-                    self._add(self._total_line(it, ot, run.get("_computed_cost") or 0,
-                                               run.get("model") or "default"))
+                if self.app.show.get("turn_total"):
+                    it = run.get("input_tokens") or 0
+                    ot = run.get("output_tokens") or 0
+                    if it or ot:
+                        self._add(self._total_line(it, ot, run.get("_computed_cost") or 0,
+                                                   run.get("model") or "default"))
                 self._acc_usage(run)
             if last_goal:
                 self._set_last(last_goal)
@@ -689,6 +778,7 @@ def _build_app(base_url, token, project_id):
                     "  /mode \\[plan|manual|auto_edit|full]   set the run mode\n"
                     "  /model                                pick a favorite model (or open the selector)\n"
                     "  /usage                                token usage: context window + spend by model\n"
+                    "  /show                                 choose what to display (tokens, iteration, totals)\n"
                     "  /new                                  start a fresh conversation\n"
                     "  /sessions                             back to the conversation list\n"
                     "  /quit                                 exit\n"
@@ -705,6 +795,8 @@ def _build_app(base_url, token, project_id):
                 self._open_model_picker()
             elif cmd == "/usage":
                 self.app.push_screen(UsageModal())
+            elif cmd == "/show":
+                self.app.push_screen(ShowModal(), lambda _=None: self._reload())
             elif cmd == "/new":
                 self.app.open_chat(None)
             elif cmd == "/sessions":
@@ -804,6 +896,11 @@ def _build_app(base_url, token, project_id):
                         time.sleep(1.5)
                         continue
                     data = pr.json()
+                    model = data.get("model")
+                    if model and "/" in model:
+                        if model not in self.app.price_by_model:
+                            self._model_info(model)     # prefetch price for per-thought cost
+                        self._cur_model = model
                     for st in data.get("steps", []):
                         since = max(since, st.get("idx", since))
                         self.app.call_from_thread(self._add_step, st)
@@ -889,7 +986,7 @@ def _build_app(base_url, token, project_id):
 
         def _total_line(self, it, ot, cost, model):
             costtxt = f" · [green]${cost:.4f}[/]" if cost else ""
-            return Static(f"[b]Total[/] [cyan]{_fmtk(it)} in[/] · [yellow]{_fmtk(ot)} out[/]"
+            return Static(f"[b]Total[/] [cyan]{_fmtn(it)} in[/] · [yellow]{_fmtn(ot)} out[/]"
                           f"{costtxt}   [dim]{_esc(model)}[/]", classes="total")
 
         def _turn_done(self, data):
@@ -910,7 +1007,8 @@ def _build_app(base_url, token, project_id):
             if status not in ("done", "chat"):
                 tag = {"error": "[red]", "cancelled": "[yellow]"}.get(status, "[dim]")
                 self._add(Static(f"{tag}· {_esc(status)}[/]", classes="status"))
-            self._add(self._total_line(it, ot, cost, model))
+            if self.app.show.get("turn_total"):
+                self._add(self._total_line(it, ot, cost, model))
             self._refresh_status()
             self.query_one("#prompt", Input).focus()
 
@@ -951,6 +1049,9 @@ def _build_app(base_url, token, project_id):
         UsageModal { align: center middle; }
         #usagebox { width: 74; max-width: 90%; height: auto; background: $panel;
                     border: thick $primary; padding: 1 2; }
+        ShowModal { align: center middle; }
+        #showbox { width: 56; max-width: 90%; height: auto; background: $panel;
+                   border: thick $primary; padding: 1 2; }
         """
         TITLE = "viclix agents"
 
@@ -967,6 +1068,8 @@ def _build_app(base_url, token, project_id):
             self.ctx_max_by_model = {}        # model -> context_length (from favorites)
             self.price_by_model = {}          # model -> (price_in_per_m, price_out_per_m, ctx)
             self.history = []                 # shell-style input history (↑/↓ recall)
+            # What to show (configurable via /show, like the web's display gear).
+            self.show = {"thought_meta": True, "iter": True, "turn_total": True}
 
         def on_mount(self):
             self.push_screen(SessionPicker())
