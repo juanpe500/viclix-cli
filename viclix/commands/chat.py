@@ -33,7 +33,7 @@ MODES = ["plan", "manual", "auto_edit", "full"]
 # redundant for these; write/exec tools keep their two-block rendering.
 MERGE_TOOLS = {"read_file", "read_files", "search_files", "list_files",
                "list_dir", "grep_files", "glob_files", "grep", "exec_command",
-               "db_query", "db_execute", "db_exec"}
+               "db_query", "db_execute", "db_exec", "fetch_url"}
 # Write tools: also one card, but the body KEEPS the written content (the call
 # already shows it); the result only surfaces failures + a ✓/char-count on the
 # title, so the redundant "Wrote … (N chars)" block disappears.
@@ -923,6 +923,22 @@ def _build_app(base_url, token, project_id):
                     parts.append(_esc(res) or "[dim](no output)[/]")
                     body.update("\n\n".join(parts))
                     if style:
+                        card.add_class(f"tool-{style}")
+                elif tool == "fetch_url":
+                    # collapsed body = full response (status + headers + body);
+                    # the title gets a colored "HTTP 200 OK" badge + green/red tint
+                    body.update(_esc(res) or "[dim](no response)[/]")
+                    m = re.match(r"\s*HTTP\s+(\d{3})", res)
+                    if m:
+                        code = int(m.group(1))
+                        ok = 200 <= code < 400
+                        badge = res.splitlines()[0].strip()   # e.g. "HTTP 200 OK"
+                        try:
+                            card.title += f"   [{'green' if ok else 'red'}]{_esc(badge)}[/]"
+                        except Exception:
+                            pass
+                        card.add_class("tool-ok" if ok else "tool-err")
+                    elif style:
                         card.add_class(f"tool-{style}")
                 else:
                     body.update(_esc(res) or "[dim](no output)[/]")
