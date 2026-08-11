@@ -393,20 +393,26 @@ def _build_app(base_url, token, project_id):
         return Static(f"[dim]· {_esc(kind)}: {_esc(content.strip()[:120])}[/]", classes="status")
 
     class AskCard(Vertical):
-        """Interactive clarifying-question card (mirrors ai.html renderAsk): the
-        question + one clickable button per suggested option. Clicking an option —
-        or typing a free-text answer in the prompt below — continues the run with
-        the original goal + this Q&A, so the agent keeps its framing. An 'Other'
-        free-text choice is always available via the prompt input, per the agent
-        contract (the backend never sends one)."""
+        """Clarifying-question card (mirrors ai.html renderAsk). Only the *pending*
+        question — the agent's latest message, still awaiting a reply — is rendered
+        interactive (one clickable button per option; a typed answer works too, the
+        'Other' path). A question that a later turn has superseded is rendered
+        compact & inert: a one-line summary with no buttons, so stale options can't
+        be clicked. Answering continues the run with the original goal + this Q&A."""
 
-        def __init__(self, payload):
-            super().__init__(classes="askcard")
+        def __init__(self, payload, active=True):
+            super().__init__(classes="askcard" if active else "askcard askcard-done")
             self.payload = payload if isinstance(payload, dict) else {}
             self.question = str(self.payload.get("question") or "").strip()
-            self.answered = False
+            self.active = active
+            self.answered = not active   # a historical card is already resolved
 
         def compose(self):
+            if not self.active:
+                # superseded → compact, inert one-liner (the answer shows as the
+                # next `you` bubble below it, so we don't repeat it here).
+                yield Static(f"[dim]?[/] [dim]{_esc(self.question)}[/]", classes="askq")
+                return
             yield Static(f"[b yellow]?[/] {_esc(self.question)}", classes="askq")
             env = self.payload.get("env") or {}
             if isinstance(env, dict) and env.get("variables"):
@@ -429,14 +435,22 @@ def _build_app(base_url, token, project_id):
             yield Static("[dim]click an option, or type your own answer below ↓[/]",
                          classes="askmeta")
 
-        def mark_answered(self, text):
-            """Freeze the card once answered: disable its buttons + show the choice."""
+        def resolve(self, answer=None):
+            """Close an *active* card once it's no longer the latest message: hide
+            its interactive controls and collapse to a compact summary line. Safe to
+            call once; historical cards are born resolved."""
             if self.answered:
                 return
             self.answered = True
-            for b in self.query(Button):
-                b.disabled = True
-            self.mount(Static(f"[green]→ {_esc(text)}[/]", classes="askchosen"))
+            for w in self.query(".askopt, .askdesc, .askmeta"):
+                w.display = False
+            summary = f"[dim]?[/] [dim]{_esc(self.question)}[/]"
+            if answer:
+                summary += f"   [green]→ {_esc(answer)}[/]"
+            heads = self.query(".askq")
+            if heads:
+                heads.first(Static).update(summary)
+            self.add_class("askcard-done")
 
     # ── session picker screen ────────────────────────────────────────────────
     class SessionPicker(Screen):
@@ -768,7 +782,9 @@ def _build_app(base_url, token, project_id):
             self._pending_tool = {}    # tool_name -> body widget awaiting its result
             self._iter_header = None   # current iteration's thought header (enriched by its llm)
             self._last_goal = ""       # newest run goal — wraps an `ask` answer as a continuation
-            self._pending_ask = None   # unanswered AskCard (a typed message answers it)
+            self._pending_ask = None   # the live/interactive AskCard (a typed message answers it)
+            self._in_load = False      # True while replaying a saved transcript
+            self._load_pending_step = None  # during load: the one ask step that stays interactive
 
         def compose(self) -> ComposeResult:
             yield Header(show_clock=False)
@@ -920,20 +936,27 @@ def _build_app(base_url, token, project_id):
                 self._step_duration(step)
                 self._pending_tool.clear()       # a reply ends the tool sequence
                 self._iter_header = None
-                self._pending_ask = None         # …and any open question
+                self._close_pending_ask()        # a reply supersedes any open question
                 if content:
                     self._add(Markdown(content, classes="mdblock"))
                 return
             if kind == "ask":
                 self._step_duration(step)
                 self._iter_header = None
+                # Only the latest question stays interactive. While replaying a
+                # transcript, that's the single pre-computed pending step; live, a
+                # fresh ask supersedes whatever came before.
+                active = (step is self._load_pending_step) if self._in_load else True
+                if active:
+                    self._close_pending_ask()
                 try:
                     payload = json.loads(content)
                 except Exception:
                     payload = {"question": content, "options": []}
-                card = AskCard(payload)
+                card = AskCard(payload, active=active)
                 self._add(card)
-                self._pending_ask = card
+                if active:
+                    self._pending_ask = card
                 return
             tool = step.get("tool") or step.get("tool_name")
             mergeable = tool in MERGE_TOOLS or tool in WRITE_TOOLS
@@ -1074,9 +1097,18 @@ def _build_app(base_url, token, project_id):
             self._prev_at = None
             self._pending_tool.clear()
             self._iter_header = None
-            for run in data.get("runs", []):
+            self._pending_ask = None
+            # A question is still "open" only if it's the very last step of the very
+            # last run — anything earlier was superseded by a later turn. That one
+            # step renders interactive; every other ask renders compact & inert.
+            runs = data.get("runs", [])
+            self._in_load = True
+            self._load_pending_step = None
+            if runs and runs[-1].get("steps") and \
+                    (runs[-1]["steps"][-1] or {}).get("kind") == "ask":
+                self._load_pending_step = runs[-1]["steps"][-1]
+            for run in runs:
                 self._cur_model = run.get("model")
-                self._pending_ask = None            # a new run supersedes a prior question
                 goal = (run.get("goal") or "").strip()
                 if goal:
                     last_goal = goal
@@ -1092,6 +1124,8 @@ def _build_app(base_url, token, project_id):
                         self._add(self._total_line(it, ot, run.get("_computed_cost") or 0,
                                                    run.get("model") or "default"))
                 self._acc_usage(run)
+            self._in_load = False
+            self._load_pending_step = None
             if last_goal:
                 self._set_last(last_goal)
                 self._last_goal = last_goal
@@ -1133,16 +1167,22 @@ def _build_app(base_url, token, project_id):
             if card is not None:
                 self._answer_ask(card, b._answer)
 
+        def _close_pending_ask(self, answer=None):
+            """Retire the live question (it's no longer the latest message): collapse
+            it to a compact, inert summary so its buttons can't be clicked."""
+            if self._pending_ask is not None:
+                self._pending_ask.resolve(answer)
+                self._pending_ask = None
+
         def _answer_ask(self, card, text):
             """Continue the run carrying the original goal + this clarification,
-            in the same session — mirrors ai.html's startRun(lastGoal + Q&A)."""
-            if card is None or card.answered or self.busy:
+            in the same session — mirrors ai.html's startRun(lastGoal + Q&A). Only
+            the live pending card is answerable; stale ones are inert."""
+            if card is None or card.answered or self.busy or card is not self._pending_ask:
                 return
-            if self._pending_ask is card:
-                self._pending_ask = None
             self._add(Static(f"[b green]▸ you[/]  {_esc(text)}", classes="you"))
             self._set_last(text)
-            card.mark_answered(text)
+            self._close_pending_ask(text)     # collapse the card, show the choice
             if self._last_goal:
                 goal = f"{self._last_goal}\n\nClarification — {card.question}\nAnswer: {text}"
             else:
@@ -1427,6 +1467,9 @@ def _build_app(base_url, token, project_id):
         /* Interactive clarifying-question card (yellow accent, like the web). */
         .askcard { margin: 1 0 1 2; padding: 0 1 1 1; height: auto;
                    background: $warning 8%; border-left: thick $warning; }
+        /* Superseded / answered question → compact, muted, inert (no buttons). */
+        .askcard-done { padding: 0 1; background: $boost; border-left: thick $success 30%; }
+        .askcard-done .askq { margin: 0; }
         .askq { margin: 0 0 1 0; }
         .askmeta { color: $text-muted; }
         .askdesc { margin: 0 0 1 0; }
