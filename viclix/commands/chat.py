@@ -28,6 +28,11 @@ from ..api import require_auth, _tok_url, _dashboard_base, reconcile_project_dat
 # Statuses at which a run is finished and polling stops.
 TERMINAL = {"done", "error", "cancelled", "chat", "needs_input"}
 MODES = ["plan", "manual", "auto_edit", "full"]
+# Read-only tools whose call+result collapse into ONE card (title = the call with
+# chips/query, body = the result once the ← response arrives). Two blocks are
+# redundant for these; write/exec tools keep their two-block rendering.
+MERGE_TOOLS = {"read_file", "read_files", "search_files", "list_files",
+               "list_dir", "grep_files", "glob_files", "grep"}
 MODE_HELP = {
     "plan": "read-only — explores & answers, never edits/deploys",
     "manual": "builds; every edit & exec waits for your approval",
@@ -191,6 +196,12 @@ def _build_app(base_url, token, project_id):
     dash = _dashboard_base(base_url)
 
     # ── small render helpers (return a widget for one agent step) ────────────
+    def _pretty_args(content):
+        try:
+            return json.dumps(json.loads(content), indent=2)
+        except Exception:
+            return content or ""
+
     def _chip(s):
         return f"[on #3a3a3a] {_esc(str(s))} [/]"
 
@@ -224,7 +235,13 @@ def _build_app(base_url, token, project_id):
             if args.get("command"):
                 return f"{head}  [dim]$[/] {_esc(str(args['command'])[:90])}"
             if args.get("query"):
-                return f"{head}  [green]\"{_esc(str(args['query'])[:70])}\"[/]"
+                extra = ""
+                if args.get("context") is not None:
+                    extra += f"   [dim]ctx {_esc(str(args['context']))}[/]"
+                for k in ("path", "dir", "glob", "file_pattern", "include", "exclude"):
+                    if args.get(k):
+                        extra += f"   [dim]{k}={_esc(str(args[k])[:28])}[/]"
+                return f"{head}  [green]\"{_esc(str(args['query'])[:70])}\"[/]{extra}"
             if args.get("url"):
                 return f"{head}  [cyan]{_esc(str(args['url'])[:80])}[/]"
             if args.get("name"):
@@ -601,6 +618,7 @@ def _build_app(base_url, token, project_id):
             self._think_timer = None
             self._think_start = 0.0
             self._cur_model = None     # model of the run currently rendering
+            self._pending_tool = {}    # tool_name -> body widget awaiting its result
 
         def compose(self) -> ComposeResult:
             yield Header(show_clock=False)
@@ -731,10 +749,26 @@ def _build_app(base_url, token, project_id):
                 return
             if kind == "reply":
                 self._step_duration(step)
+                self._pending_tool.clear()       # a reply ends the tool sequence
                 if content:
                     self._add(Markdown(content, classes="mdblock"))
                 return
-            # tool_call / tool_result / error / ask / approval / … keep the nice cards
+            tool = step.get("tool") or step.get("tool_name")
+            # Read-only tools: one card. The call makes it (title = chips/query,
+            # body = args); its result fills the SAME body when it arrives.
+            if kind == "tool_call" and tool in MERGE_TOOLS:
+                self._step_duration(step)
+                body = Static(f"[dim]{_esc(_pretty_args(content))}[/]")
+                self._add(Collapsible(body, title=_summarize("tool_call", tool, content),
+                                      collapsed=True, classes="tool"))
+                self._pending_tool[tool] = body
+                return
+            if kind == "tool_result" and tool in MERGE_TOOLS and tool in self._pending_tool:
+                self._step_duration(step)
+                body = self._pending_tool.pop(tool)
+                body.update(_esc((content or "").strip()) or "[dim](no output)[/]")
+                return
+            # write/exec tools, errors, asks, approvals, unmatched results → 2 cards
             self._step_duration(step)
             self._add(step_widget(step))
 
@@ -780,6 +814,7 @@ def _build_app(base_url, token, project_id):
             last_goal = ""
             self._iter = ""
             self._prev_at = None
+            self._pending_tool.clear()
             for run in data.get("runs", []):
                 self._cur_model = run.get("model")
                 goal = (run.get("goal") or "").strip()
@@ -912,6 +947,7 @@ def _build_app(base_url, token, project_id):
             self.busy = True
             self._iter = ""
             self._prev_at = None
+            self._pending_tool.clear()
             self._start_thinking()
 
             def go():
