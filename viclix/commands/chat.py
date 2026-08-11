@@ -32,7 +32,8 @@ MODES = ["plan", "manual", "auto_edit", "full"]
 # chips/query, body = the result once the ← response arrives). Two blocks are
 # redundant for these; write/exec tools keep their two-block rendering.
 MERGE_TOOLS = {"read_file", "read_files", "search_files", "list_files",
-               "list_dir", "grep_files", "glob_files", "grep", "exec_command"}
+               "list_dir", "grep_files", "glob_files", "grep", "exec_command",
+               "db_query", "db_execute", "db_exec"}
 # Write tools: also one card, but the body KEEPS the written content (the call
 # already shows it); the result only surfaces failures + a ✓/char-count on the
 # title, so the redundant "Wrote … (N chars)" block disappears.
@@ -271,6 +272,10 @@ def _build_app(base_url, token, project_id):
                 first = cmd.splitlines()[0] if cmd else cmd
                 more = "…" if ("\n" in cmd or len(first) > 120) else ""
                 return f"{head}  [dim]$[/] {_esc(first[:120])}{more}"
+            if args.get("sql"):
+                sql = " ".join(str(args["sql"]).split())
+                more = "…" if len(sql) > 120 else ""
+                return f"{head}  [green]{_esc(sql[:120])}{more}[/]"
             if args.get("query"):
                 extra = ""
                 if args.get("context") is not None:
