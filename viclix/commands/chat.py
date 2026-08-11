@@ -67,6 +67,58 @@ def _fmtk(n):
     return str(n)
 
 
+def _extract_patch(raw):
+    """The patch/diff text out of an apply_patch call's JSON args."""
+    try:
+        a = json.loads(raw)
+        return a.get("patch") or a.get("diff") or a.get("content") or raw or ""
+    except Exception:
+        return raw or ""
+
+
+def _patch_stats(patch):
+    """(files, added, removed) for a patch — supports the '*** Update File:' and
+    unified-diff formats."""
+    files, add, rem = [], 0, 0
+    for line in str(patch or "").splitlines():
+        m = re.match(r"\*\*\*\s+(?:Update|Add|Delete)\s+File:\s+(.+)", line)
+        if m:
+            files.append(m.group(1).strip())
+            continue
+        m2 = re.match(r"\+\+\+\s+[ab]/(.+)", line)
+        if m2:
+            files.append(m2.group(1).strip())
+            continue
+        if line.startswith("+") and not line.startswith("+++"):
+            add += 1
+        elif line.startswith("-") and not line.startswith("---"):
+            rem += 1
+    seen = []
+    for f in files:
+        if f not in seen:
+            seen.append(f)
+    return seen, add, rem
+
+
+def _render_patch(patch):
+    """Markup for a diff: +added green, -removed red, @@ hunks cyan, headers dim,
+    context plain. Meant for a Static on a dark background."""
+    out = []
+    for line in str(patch or "").splitlines():
+        e = _esc(line)
+        if line.startswith(("+++", "---", "***", "diff ", "index ", "Index:")):
+            out.append(f"[dim]{e}[/]")
+        elif line.startswith("@@"):
+            out.append(f"[b cyan]{e}[/]")
+        elif line.startswith("+"):
+            out.append(f"[green]{e}[/]")
+        elif line.startswith("-"):
+            out.append(f"[red]{e}[/]")
+        else:
+            out.append(e)
+    return "\n".join(out)
+
+
 def _clip_lines(s, n):
     """Keep at most n lines; append a '(+N more lines)' note when clipped."""
     lines = str(s or "").splitlines()
@@ -255,6 +307,10 @@ def _build_app(base_url, token, project_id):
         except Exception:
             args = None
         head = f"[b]→ {_esc(tool or 'tool')}[/]"
+        if tool == "apply_patch":
+            files, add, rem = _patch_stats(_extract_patch(content))
+            chips = "  ".join(_chip(_basename(f)) for f in files[:4]) or _chip("patch")
+            return f"{head}  {chips}   [green]+{add}[/] [red]-{rem}[/]"
         if isinstance(args, dict):
             if isinstance(args.get("paths"), list) and args["paths"]:
                 chips = "  ".join(_chip(_basename(p)) for p in args["paths"][:8])
@@ -802,7 +858,9 @@ def _build_app(base_url, token, project_id):
             # (read/exec) or just confirms on the title (write), + tints by result.
             if kind == "tool_call" and mergeable:
                 self._step_duration(step)
-                if tool in WRITE_TOOLS:
+                if tool == "apply_patch":
+                    body = Static(_render_patch(_extract_patch(content)), classes="patchbody")
+                elif tool in WRITE_TOOLS:
                     body = Static(_write_preview(content))   # the written file, not JSON
                 else:
                     body = Static(f"[dim]{_esc(_pretty_args(content))}[/]")
@@ -821,6 +879,15 @@ def _build_app(base_url, token, project_id):
                     if style == "err":
                         body.update(_esc(res))
                         card.add_class("tool-err")
+                    elif tool == "apply_patch":
+                        card.add_class("tool-edit")
+                        files, add, rem = _patch_stats(_extract_patch(call_content))
+                        chips = "  ".join(f"{_chip(_basename(f))}[green]✓[/]" for f in files[:4]) \
+                            or f"{_chip('patch')}[green]✓[/]"
+                        try:
+                            card.title = f"[b]→ apply_patch[/]  {chips}   [green]+{add}[/] [red]-{rem}[/]"
+                        except Exception:
+                            pass
                     else:
                         card.add_class("tool-edit")   # blue = edit, not execution
                         m = re.search(r"\((\d[\d,]*)\s*chars?\)", content or "")
@@ -1212,6 +1279,7 @@ def _build_app(base_url, token, project_id):
         .tool-ok { background: $success 8%; }
         .tool-edit { background: $primary 12%; }
         .tool-err { background: $error 12%; }
+        .patchbody { background: #0a0a0a; padding: 0 1; }
         .total { margin: 0 0 1 0; }
         .hint { padding: 1; color: $text-muted; }
         #sessions > ListItem { height: auto; padding: 0 0 1 0; }
