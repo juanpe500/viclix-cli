@@ -227,6 +227,15 @@ def _build_app(base_url, token, project_id):
         except Exception:
             return content or ""
 
+    def _write_preview(raw):
+        """The actual file content/patch written (real newlines), not the JSON."""
+        try:
+            a = json.loads(raw)
+            txt = a.get("content") or a.get("patch") or a.get("diff") or a.get("text") or ""
+        except Exception:
+            txt = raw or ""
+        return _esc(_clip_lines(txt, 200))
+
     def _chip(s):
         return f"[on #3a3a3a] {_esc(str(s))} [/]"
 
@@ -788,7 +797,10 @@ def _build_app(base_url, token, project_id):
             # (read/exec) or just confirms on the title (write), + tints by result.
             if kind == "tool_call" and mergeable:
                 self._step_duration(step)
-                body = Static(f"[dim]{_esc(_pretty_args(content))}[/]")
+                if tool in WRITE_TOOLS:
+                    body = Static(_write_preview(content))   # the written file, not JSON
+                else:
+                    body = Static(f"[dim]{_esc(_pretty_args(content))}[/]")
                 card = Collapsible(body, title=_summarize("tool_call", tool, content),
                                    collapsed=True, classes="tool")
                 self._add(card)
