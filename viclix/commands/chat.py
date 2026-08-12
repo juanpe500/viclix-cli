@@ -42,6 +42,8 @@ MERGE_TOOLS = {"read_file", "read_files", "search_files", "list_files",
 LOG_TOOLS = {"get_logs", "get_build_logs"}
 # Tools rendered like a shell run: "$ <cmd>" then stdout/stderr in the body.
 EXEC_TOOLS = {"exec_command", "run_script"}
+# Tools whose result is a 'Label: value' dump → prettified body (dim labels).
+KV_TOOLS = {"get_project_status"}
 # Write tools: also one card, but the body KEEPS the written content (the call
 # already shows it); the result only surfaces failures + a ✓/char-count on the
 # title, so the redundant "Wrote … (N chars)" block disappears.
@@ -149,6 +151,46 @@ def _result_style(content):
             or low.startswith("error") or "\nerror" in low:
         return "err"
     return None
+
+
+def _result_preview(res, maxlen=70):
+    """A one-line gist of a tool result → dim suffix on the collapsed card title,
+    so an observer's answer (e.g. 'No memories found.') shows without expanding."""
+    lines = [ln for ln in str(res or "").splitlines() if ln.strip()]
+    if not lines:
+        return ""
+    first = " ".join(lines[0].split())
+    if len(first) > maxlen:
+        first = first[:maxlen - 1] + "…"
+    if len(lines) > 1:
+        first += f"  (+{len(lines) - 1} lines)"
+    return first
+
+
+# Status words to tint inside a key:value dump (get_project_status expanded body).
+_STATUS_GOOD = {"running", "on", "verified", "healthy", "active", "public"}
+_STATUS_BAD = {"stopped", "sleeping", "crashed", "error", "down", "off", "502"}
+
+
+def _fmt_kv_body(res):
+    """Prettify a 'Label: value' status dump: dim the labels so values pop, and
+    green/red the known good/bad status words. Untouched lines pass through."""
+    out = []
+    for line in str(res or "").splitlines():
+        m = re.match(r"^(\s*)([A-Z][\w ./()+-]*?):(\s*)(.*)$", line)
+        if not m:
+            out.append(_esc(line))
+            continue
+        indent, label, sp, val = m.groups()
+        w = val.strip().lower()
+        if w in _STATUS_GOOD:
+            ev = f"[green]{_esc(val)}[/]"
+        elif w in _STATUS_BAD:
+            ev = f"[red]{_esc(val)}[/]"
+        else:
+            ev = _esc(val)
+        out.append(f"{indent}[dim]{_esc(label)}:[/]{sp}{ev}")
+    return "\n".join(out)
 
 
 def _fmtn(n):
@@ -1065,7 +1107,18 @@ def _build_app(base_url, token, project_id):
                     elif style:
                         card.add_class(f"tool-{style}")
                 else:
-                    body.update(_esc(res) or "[dim](no output)[/]")
+                    if tool in KV_TOOLS:
+                        body.update(_fmt_kv_body(res) or "[dim](no output)[/]")
+                    else:
+                        body.update(_esc(res) or "[dim](no output)[/]")
+                    # A one-line gist on the collapsed title (the observer's answer
+                    # without expanding) — skip when the result already IS the title.
+                    prev = _result_preview(res)
+                    if prev:
+                        try:
+                            card.title += f"   [dim]{_esc(prev)}[/]"
+                        except Exception:
+                            pass
                     # log dumps carry "error"/"traceback" as content, not a failure
                     if style and tool not in LOG_TOOLS:
                         card.add_class(f"tool-{style}")
