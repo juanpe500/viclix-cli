@@ -44,6 +44,9 @@ LOG_TOOLS = {"get_logs", "get_build_logs"}
 EXEC_TOOLS = {"exec_command", "run_script"}
 # Tools whose result is a 'Label: value' dump → prettified body (dim labels).
 KV_TOOLS = {"get_project_status"}
+# Group B — side-effect tools: one card, the result just confirms (✓ + a short
+# note parsed from it) on the title and tints green/red. (Growing set.)
+CONFIRM_TOOLS = {"remember"}
 # Write tools: also one card, but the body KEEPS the written content (the call
 # already shows it); the result only surfaces failures + a ✓/char-count on the
 # title, so the redundant "Wrote … (N chars)" block disappears.
@@ -397,6 +400,8 @@ def _build_app(base_url, token, project_id):
                 return f"{head}  [cyan]{_esc(str(args['url'])[:80])}[/]"
             if args.get("name"):
                 return f"{head}  {_chip(args['name'])}"
+            if args.get("key"):         # remember — the memory key
+                return f"{head}  {_chip(str(args['key']))}"
             if args.get("file"):        # run_script — the script + its args
                 extra = f" {_esc(str(args['args'])[:40])}" if args.get("args") else ""
                 return f"{head}  {_chip(_basename(str(args['file'])))}{extra}"
@@ -1016,7 +1021,7 @@ def _build_app(base_url, token, project_id):
                     self._pending_ask = card
                 return
             tool = step.get("tool") or step.get("tool_name")
-            mergeable = tool in MERGE_TOOLS or tool in WRITE_TOOLS
+            mergeable = tool in MERGE_TOOLS or tool in WRITE_TOOLS or tool in CONFIRM_TOOLS
             dur = self._step_duration(step)   # advance the timeline once per step
             # A tool_call may carry the iteration's LLM usage (when the model
             # emitted a tool directly, with no separate llm step) — enrich this
@@ -1039,8 +1044,8 @@ def _build_app(base_url, token, project_id):
             if kind == "tool_call" and mergeable:
                 if tool == "apply_patch":
                     body = Static(_render_patch(_extract_patch(content)), classes="patchbody")
-                elif tool in WRITE_TOOLS:
-                    body = Static(_write_preview(content))   # the written file, not JSON
+                elif tool in WRITE_TOOLS or tool == "remember":
+                    body = Static(_write_preview(content))   # the written file / note, not JSON
                 else:
                     body = Static(f"[dim]{_esc(_pretty_args(content))}[/]")
                 card = Collapsible(body, title=_summarize("tool_call", tool, content),
@@ -1052,7 +1057,20 @@ def _build_app(base_url, token, project_id):
                 body, card, call_content = self._pending_tool.pop(tool)
                 style = _result_style(content or "")
                 res = (content or "").strip()
-                if tool in WRITE_TOOLS:
+                if tool == "remember":
+                    # body keeps the note (from the call); confirm scope on the title
+                    if style == "err":
+                        body.update(_esc(res))
+                        card.add_class("tool-err")
+                    else:
+                        m = re.search(r"in (\w+) memory", res)
+                        scope = m.group(1) if m else ""
+                        try:
+                            card.title += f"   [green]✓{(' ' + scope) if scope else ''}[/]"
+                        except Exception:
+                            pass
+                        card.add_class("tool-ok")
+                elif tool in WRITE_TOOLS:
                     # keep the written content in the body; surface only failures
                     if style == "err":
                         body.update(_esc(res))
