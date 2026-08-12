@@ -36,7 +36,7 @@ MERGE_TOOLS = {"read_file", "read_files", "search_files", "list_files",
                "db_query", "db_execute", "db_exec", "fetch_url",
                # read-like observers: the result IS the payload → fills the body
                "read_skill_file", "get_logs", "get_build_logs", "get_project_status",
-               "recall", "list_agents", "run_script"}
+               "recall", "list_agents", "run_script", "use_skill", "browser_test"}
 # Log-dump readers: their output legitimately contains "error"/"traceback" as
 # CONTENT, not a tool failure — never tint their card red on those keywords.
 LOG_TOOLS = {"get_logs", "get_build_logs"}
@@ -44,16 +44,25 @@ LOG_TOOLS = {"get_logs", "get_build_logs"}
 EXEC_TOOLS = {"exec_command", "run_script"}
 # Tools whose result is a 'Label: value' dump → prettified body (dim labels).
 KV_TOOLS = {"get_project_status"}
-# Group B — side-effect tools: one card, the result just confirms (✓ + a short
-# note parsed from it) on the title and tints green/red. (Growing set.)
-CONFIRM_TOOLS = {"remember"}
+# Group B — side-effect tools: one card, the result confirms (✓ + a short gist)
+# on the title and tints green/red. The chip (what was acted on) comes from the
+# call args via _summarize; the body holds the result detail.
+CONFIRM_TOOLS = {
+    "remember",
+    "delete_file", "move_file",
+    "set_env_var", "unset_env_var",
+    "create_agent", "update_agent", "toggle_agent", "run_agent", "delete_agent",
+    "restart_app", "redeploy",
+    "notify_user", "send_email",
+}
 # Write tools: also one card, but the body KEEPS the written content (the call
 # already shows it); the result only surfaces failures + a ✓/char-count on the
 # title, so the redundant "Wrote … (N chars)" block disappears.
 WRITE_TOOLS = {"write_file", "apply_patch", "create_file", "edit_file"}
 # Control-flow tools with dedicated step-kind rendering (ask card, reply markdown,
-# done total). Their tool_call/tool_result rows are redundant → never rendered.
-SILENT_TOOLS = {"ask", "request_env_access", "reply", "done"}
+# done total, propose_ui_action → its own `ui_action` step). Their tool_call/
+# tool_result rows are redundant → never rendered.
+SILENT_TOOLS = {"ask", "request_env_access", "reply", "done", "propose_ui_action"}
 MODE_HELP = {
     "plan": "read-only — explores & answers, never edits/deploys",
     "manual": "builds; every edit & exec waits for your approval",
@@ -400,11 +409,24 @@ def _build_app(base_url, token, project_id):
                 return f"{head}  [cyan]{_esc(str(args['url'])[:80])}[/]"
             if args.get("name"):
                 return f"{head}  {_chip(args['name'])}"
-            if args.get("key"):         # remember — the memory key
+            if args.get("key"):         # remember / set_env_var — the key/var name
                 return f"{head}  {_chip(str(args['key']))}"
             if args.get("file"):        # run_script — the script + its args
                 extra = f" {_esc(str(args['args'])[:40])}" if args.get("args") else ""
                 return f"{head}  {_chip(_basename(str(args['file'])))}{extra}"
+            if args.get("src") and args.get("dst"):   # move_file
+                return (f"{head}  {_chip(_basename(str(args['src'])))} [dim]→[/] "
+                        f"{_chip(_basename(str(args['dst'])))}")
+            if args.get("agent_id"):    # agent ops — id (+ name when renaming)
+                extra = f"  {_chip(str(args['name']))}" if args.get("name") else ""
+                return f"{head}  [dim]{_esc(str(args['agent_id'])[:12])}[/]{extra}"
+            if args.get("title"):       # notify_user — the headline
+                return f"{head}  {_esc(str(args['title'])[:70])}"
+            if args.get("to"):          # send_email — recipient (+ subject)
+                subj = f"   [dim]{_esc(str(args['subject'])[:40])}[/]" if args.get("subject") else ""
+                return f"{head}  [cyan]{_esc(str(args['to'])[:40])}[/]{subj}"
+            if args.get("mode"):        # redeploy — full / fast
+                return f"{head}  {_chip(str(args['mode']))}"
             if not args:                # no-arg observers (list_agents, status…)
                 return head
         if not c or c in ("{}", "null"):
@@ -1020,6 +1042,30 @@ def _build_app(base_url, token, project_id):
                 if active:
                     self._pending_ask = card
                 return
+            if kind == "ui_action":
+                # propose_ui_action → a deep-link the user acts on in the dashboard.
+                # The CLI can't perform it, so render it as a clear suggestion.
+                self._step_duration(step)
+                self._iter_header = None
+                try:
+                    a = json.loads(content)
+                except Exception:
+                    a = {}
+                label = str(a.get("label") or "Open").strip()
+                tab = str(a.get("tab") or "").strip()
+                reason = str(a.get("reason") or "").strip()
+                prefill = a.get("prefill") if isinstance(a.get("prefill"), dict) else {}
+                lines = [f"[b magenta]▸ do this in the dashboard[/]  {_esc(label)}"
+                         + (f"   [dim]→ {_esc(tab)} tab[/]" if tab else "")]
+                if reason:
+                    lines.append(f"  [dim]{_esc(reason)}[/]")
+                if prefill:
+                    pf = "  ".join(f"{_esc(str(k))}={_esc(str(v))}" for k, v in list(prefill.items())[:4])
+                    lines.append(f"  [dim]prefill: {pf}[/]")
+                self._add(Static("\n".join(lines), classes="uiaction"))
+                return
+            if kind in ("browser_test_result", "approval_vote", "cancel_request"):
+                return   # hidden cross-worker signalling — never rendered
             tool = step.get("tool") or step.get("tool_name")
             mergeable = tool in MERGE_TOOLS or tool in WRITE_TOOLS or tool in CONFIRM_TOOLS
             dur = self._step_duration(step)   # advance the timeline once per step
@@ -1067,6 +1113,18 @@ def _build_app(base_url, token, project_id):
                         scope = m.group(1) if m else ""
                         try:
                             card.title += f"   [green]✓{(' ' + scope) if scope else ''}[/]"
+                        except Exception:
+                            pass
+                        card.add_class("tool-ok")
+                elif tool in CONFIRM_TOOLS:
+                    # side-effect: the result IS the confirmation → body + ✓ gist + tint
+                    body.update(_esc(res) or "[dim](done)[/]")
+                    if style == "err":
+                        card.add_class("tool-err")
+                    else:
+                        prev = _result_preview(res, maxlen=52)
+                        try:
+                            card.title += "   [green]✓[/]" + (f"  [dim]{_esc(prev)}[/]" if prev else "")
                         except Exception:
                             pass
                         card.add_class("tool-ok")
@@ -1555,6 +1613,9 @@ def _build_app(base_url, token, project_id):
         .status { margin: 0 0 0 2; }
         .error { margin: 0 0 0 2; }
         .ask { margin: 1 0 0 2; }
+        /* propose_ui_action affordance — a suggestion the user acts on manually. */
+        .uiaction { margin: 1 0 1 2; padding: 0 1; height: auto;
+                    background: $secondary 8%; border-left: thick $secondary; }
         /* Interactive clarifying-question card (yellow accent, like the web). */
         .askcard { margin: 1 0 1 2; padding: 0 1 1 1; height: auto;
                    background: $warning 8%; border-left: thick $warning; }
