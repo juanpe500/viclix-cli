@@ -1677,7 +1677,10 @@ def _build_app(base_url, token, project_id):
            doubled with ours. */
         Markdown { margin: 0; padding: 0; }
         .mdblock { margin: 0 0 0 2; }
-        #prompt { height: 3; }
+        /* Flat single-line prompt — drop the Input's tall focus border (the glaring
+           blue box) and read as a subtle bar instead, matching the status row. */
+        #prompt { height: 1; border: none; background: $boost; padding: 0 1; }
+        #prompt:focus { border: none; }
         #status { height: 1; color: $text-muted; padding: 0 1; background: $boost; }
         /* Our own messages get a green-tinted bar so they're easy to spot in the flow. */
         .you { margin: 1 0 0 0; padding: 0 1; width: 1fr; height: auto;
