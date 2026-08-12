@@ -33,7 +33,15 @@ MODES = ["plan", "manual", "auto_edit", "full"]
 # redundant for these; write/exec tools keep their two-block rendering.
 MERGE_TOOLS = {"read_file", "read_files", "search_files", "list_files",
                "list_dir", "grep_files", "glob_files", "grep", "exec_command",
-               "db_query", "db_execute", "db_exec", "fetch_url"}
+               "db_query", "db_execute", "db_exec", "fetch_url",
+               # read-like observers: the result IS the payload → fills the body
+               "read_skill_file", "get_logs", "get_build_logs", "get_project_status",
+               "recall", "list_agents", "run_script"}
+# Log-dump readers: their output legitimately contains "error"/"traceback" as
+# CONTENT, not a tool failure — never tint their card red on those keywords.
+LOG_TOOLS = {"get_logs", "get_build_logs"}
+# Tools rendered like a shell run: "$ <cmd>" then stdout/stderr in the body.
+EXEC_TOOLS = {"exec_command", "run_script"}
 # Write tools: also one card, but the body KEEPS the written content (the call
 # already shows it); the result only surfaces failures + a ✓/char-count on the
 # title, so the redundant "Wrote … (N chars)" block disappears.
@@ -347,6 +355,13 @@ def _build_app(base_url, token, project_id):
                 return f"{head}  [cyan]{_esc(str(args['url'])[:80])}[/]"
             if args.get("name"):
                 return f"{head}  {_chip(args['name'])}"
+            if args.get("file"):        # run_script — the script + its args
+                extra = f" {_esc(str(args['args'])[:40])}" if args.get("args") else ""
+                return f"{head}  {_chip(_basename(str(args['file'])))}{extra}"
+            if not args:                # no-arg observers (list_agents, status…)
+                return head
+        if not c or c in ("{}", "null"):
+            return head
         return f"{head}  {_esc(c[:80])}"
 
     def step_widget(step):
@@ -1016,12 +1031,16 @@ def _build_app(base_url, token, project_id):
                             card.title += f"   [cyan]✓{' ' + m.group(1) + ' chars' if m else ''}[/]"
                         except Exception:
                             pass
-                elif tool == "exec_command":
-                    # show the FULL command (up to 20 lines) then its output
+                elif tool in EXEC_TOOLS:
+                    # show the FULL invocation (up to 20 lines) then its output
                     try:
-                        cmd = (json.loads(call_content) or {}).get("command", "")
+                        a = json.loads(call_content) or {}
                     except Exception:
-                        cmd = ""
+                        a = {}
+                    if tool == "run_script":
+                        cmd = " ".join(str(x) for x in (a.get("file", ""), a.get("args", "")) if x)
+                    else:
+                        cmd = a.get("command", "")
                     parts = []
                     if cmd:
                         parts.append(f"[dim]$ {_esc(_clip_lines(cmd, 20))}[/]")
@@ -1047,7 +1066,8 @@ def _build_app(base_url, token, project_id):
                         card.add_class(f"tool-{style}")
                 else:
                     body.update(_esc(res) or "[dim](no output)[/]")
-                    if style:
+                    # log dumps carry "error"/"traceback" as content, not a failure
+                    if style and tool not in LOG_TOOLS:
                         card.add_class(f"tool-{style}")
                 return
             # write/exec tools, errors, asks, approvals, unmatched results → 2 cards
