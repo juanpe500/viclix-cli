@@ -291,7 +291,8 @@ def _build_app(base_url, token, project_id):
 
     # Slash-command autocomplete (inline ghost text; → or Tab accepts).
     slash_suggester = SuggestFromList(
-        ["/help", "/model", "/usage", "/show", "/new", "/sessions", "/quit",
+        ["/help", "/model", "/usage", "/show", "/restart", "/autorestart on",
+         "/autorestart off", "/new", "/sessions", "/quit",
          "/mode plan", "/mode manual", "/mode auto_edit", "/mode full"],
         case_sensitive=False,
     )
@@ -850,6 +851,7 @@ def _build_app(base_url, token, project_id):
             ("ctrl+q", "app.quit", "Quit"),
             ("escape", "cancel", "Cancel turn"),
             ("ctrl+n", "sessions", "Sessions"),
+            ("ctrl+r", "restart", "Restart app"),
         ]
 
         def __init__(self, session_id):
@@ -869,13 +871,15 @@ def _build_app(base_url, token, project_id):
             self._pending_ask = None   # the live/interactive AskCard (a typed message answers it)
             self._in_load = False      # True while replaying a saved transcript
             self._load_pending_step = None  # during load: the one ask step that stays interactive
+            self._pending_restart = False   # a restart_needed banner is showing / restart offered
+            self._restarting = False        # a manual restart request is in flight
 
         def compose(self) -> ComposeResult:
             yield Header(show_clock=False)
             yield Static("[dim]▸ your last message will pin here[/]", id="lastmsg")
             yield VerticalScroll(id="log")
             yield Static("", id="thinking")
-            yield Static("[dim]esc cancel turn   ·   ^n sessions   ·   ^q quit   ·   /help[/]",
+            yield Static("[dim]esc cancel turn   ·   ^r restart   ·   ^n sessions   ·   ^q quit   ·   /help[/]",
                          id="keyhints")
             yield PromptInput(placeholder="Type a message…  (/ for commands · ↑ history)",
                               id="prompt", suggester=slash_suggester)
@@ -895,7 +899,8 @@ def _build_app(base_url, token, project_id):
             else:
                 ctx = _fmtk(a.ctx_used)
             reason = f" [magenta]R:{_esc(a.reasoning_effort)}[/]" if a.reasoning_effort else ""
-            return (f"[b]{_esc(a.model)}[/] [dim]· {a.mode}[/]{reason}   "
+            ar = " [green]↻auto[/]" if a.auto_restart else ""
+            return (f"[b]{_esc(a.model)}[/] [dim]· {a.mode}[/]{reason}{ar}   "
                     f"[dim]ctx[/] {ctx}   "
                     f"Σ [cyan]↑{_fmtk(a.tok_in)}[/] [yellow]↓{_fmtk(a.tok_out)}[/] "
                     f"[green]${a.cost:.4f}[/]   [dim](/usage /model /mode /help)[/]")
@@ -1063,6 +1068,25 @@ def _build_app(base_url, token, project_id):
                     pf = "  ".join(f"{_esc(str(k))}={_esc(str(v))}" for k, v in list(prefill.items())[:4])
                     lines.append(f"  [dim]prefill: {pf}[/]")
                 self._add(Static("\n".join(lines), classes="uiaction"))
+                return
+            if kind == "restart_needed":
+                # The run changed .py / installed deps but auto-restart is off →
+                # offer a one-key restart (live only; a replay just notes it).
+                self._step_duration(step)
+                self._iter_header = None
+                try:
+                    reason = str((json.loads(content) or {}).get("reason", "")).strip()
+                except Exception:
+                    reason = content
+                live = not self._in_load
+                if live:
+                    self._pending_restart = True
+                    tail = "   [b]/restart[/] [dim]or[/] [b]^R[/] [dim]to restart now[/]"
+                    self._add(Static(f"[b yellow]⟳ restart needed[/]  [dim]{_esc(reason)}[/]{tail}",
+                                     classes="restart"))
+                else:
+                    self._add(Static(f"[dim]⟳ restart was needed — {_esc(reason)}[/]",
+                                     classes="restart restart-done"))
                 return
             if kind in ("browser_test_result", "approval_vote", "cancel_request"):
                 return   # hidden cross-worker signalling — never rendered
@@ -1348,6 +1372,8 @@ def _build_app(base_url, token, project_id):
                     "  /model                                pick a favorite model (or open the selector)\n"
                     "  /usage                                token usage: context window + spend by model\n"
                     "  /show                                 choose what to display (tokens, iteration, totals)\n"
+                    "  /restart                              restart the app now (also ^R)\n"
+                    "  /autorestart \\[on|off]                restart automatically after .py changes\n"
                     "  /new                                  start a fresh conversation\n"
                     "  /sessions                             back to the conversation list\n"
                     "  /quit                                 exit\n"
@@ -1366,6 +1392,18 @@ def _build_app(base_url, token, project_id):
                 self.app.push_screen(UsageModal())
             elif cmd == "/show":
                 self.app.push_screen(ShowModal(), lambda _=None: self._reload())
+            elif cmd == "/restart":
+                self._do_restart()
+            elif cmd == "/autorestart":
+                if len(parts) > 1 and parts[1].lower() in ("on", "off"):
+                    self.app.auto_restart = parts[1].lower() == "on"
+                else:
+                    self.app.auto_restart = not self.app.auto_restart   # bare toggle
+                self._refresh_status()
+                state = "on" if self.app.auto_restart else "off"
+                self._add(Static(f"[dim]auto-restart → {state} "
+                                 f"(restart the app automatically after a run's .py/deps changes)[/]",
+                                 classes="status"))
             elif cmd == "/new":
                 self.app.open_chat(None)
             elif cmd == "/sessions":
@@ -1423,6 +1461,38 @@ def _build_app(base_url, token, project_id):
         def action_sessions(self):
             self.app.push_screen(SessionPicker())
 
+        def action_restart(self):
+            self._do_restart()
+
+        def _do_restart(self):
+            """Restart the app runtime (POST projects/restart) — the same endpoint
+            deploy.py uses. Offered by the restart_needed banner or on demand."""
+            if self._restarting:
+                return
+            self._restarting = True
+            self._pending_restart = False
+            self._add(Static("[yellow]⟳ restarting the app…[/]", classes="status"))
+
+            def go():
+                ok, detail = False, ""
+                try:
+                    r = requests.post(_tok_url(base_url, "projects/restart", token, project_id),
+                                      timeout=60)
+                    ok = r.status_code == 200
+                    if not ok:
+                        detail = (r.text or "")[:200]
+                except requests.RequestException as e:
+                    detail = str(e)
+                self.app.call_from_thread(self._restart_done, ok, detail)
+            self.run_worker(go, thread=True)
+
+        def _restart_done(self, ok, detail):
+            self._restarting = False
+            if ok:
+                self._add(Static("[b green]✓[/] app restarted", classes="status"))
+            else:
+                self._add(Static(f"[b red]✗[/] restart failed: {_esc(detail)}", classes="status"))
+
         # -- send a message: create run, then poll-stream it --
         def _send(self, goal):
             self.busy = True
@@ -1431,11 +1501,13 @@ def _build_app(base_url, token, project_id):
             self._prev_at = None
             self._pending_tool.clear()
             self._iter_header = None
+            self._pending_restart = False   # a new turn supersedes a prior restart offer
             self._start_thinking()
 
             def go():
                 try:
-                    body = {"goal": goal, "mode": self.app.mode}
+                    body = {"goal": goal, "mode": self.app.mode,
+                            "auto_restart": bool(self.app.auto_restart)}
                     if self.session_id:
                         body["session_id"] = self.session_id
                     # Send a picked model (a real provider/model id) — the server
@@ -1607,12 +1679,18 @@ def _build_app(base_url, token, project_id):
         .mdblock { margin: 0 0 0 2; }
         #prompt { height: 3; }
         #status { height: 1; color: $text-muted; padding: 0 1; background: $boost; }
-        .you { margin: 1 0 0 0; }
+        /* Our own messages get a green-tinted bar so they're easy to spot in the flow. */
+        .you { margin: 1 0 0 0; padding: 0 1; width: 1fr; height: auto;
+               background: $success 10%; border-left: thick $success; }
         .reply { margin: 0 0 0 2; }
         .think { margin: 1 0 0 2; }
         .status { margin: 0 0 0 2; }
         .error { margin: 0 0 0 2; }
         .ask { margin: 1 0 0 2; }
+        /* restart_needed banner — live offer (yellow) vs a historical note (muted). */
+        .restart { margin: 1 0 1 2; padding: 0 1; height: auto;
+                   background: $warning 10%; border-left: thick $warning; }
+        .restart-done { margin: 0 0 0 2; padding: 0; background: transparent; border-left: none; }
         /* propose_ui_action affordance — a suggestion the user acts on manually. */
         .uiaction { margin: 1 0 1 2; padding: 0 1; height: auto;
                     background: $secondary 8%; border-left: thick $secondary; }
@@ -1667,6 +1745,7 @@ def _build_app(base_url, token, project_id):
             self.ctx_max_by_model = {}        # model -> context_length (from favorites)
             self.price_by_model = {}          # model -> (price_in_per_m, price_out_per_m, ctx)
             self.history = []                 # shell-style input history (↑/↓ recall)
+            self.auto_restart = False         # restart the app after a run's .py changes
             # What to show (configurable via /show, like the web's display gear).
             self.show = {"thought_meta": True, "iter": True, "turn_total": True}
 
