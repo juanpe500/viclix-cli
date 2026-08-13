@@ -26,6 +26,7 @@ import os
 import sys
 import time
 import queue
+import threading
 import unicodedata
 
 from ..console import logger
@@ -36,6 +37,7 @@ FRAME_MS = 30          # 10/20/30 ms frames
 FRAME_LEN = VAD_RATE * FRAME_MS // 1000
 SILENCE_MS = 600       # trailing silence that ends one utterance
 MIN_UTTER_MS = 250     # ignore blips shorter than this
+PARTIAL_EVERY_FRAMES = 18   # ~0.5s of new speech between live partial updates
 
 DEFAULT_STOP_WORDS = ("send", "puto")
 DEFAULT_MODEL = "small"
@@ -110,6 +112,10 @@ def _cudnn_present() -> bool:
 def _load_model(size: str, np, device: str = "auto"):
     """Load faster-whisper. device: auto (CUDA if cuDNN present, else CPU) | cuda | cpu."""
     _register_cuda_dlls()
+    # Quiet faster-whisper's per-call "Processing audio with duration…" INFO logs;
+    # with live partials it would otherwise print on every update.
+    import logging as _logging
+    _logging.getLogger("faster_whisper").setLevel(_logging.WARNING)
     try:
         from faster_whisper import WhisperModel
     except ImportError:
@@ -187,21 +193,50 @@ def _copy_clipboard(text: str) -> bool:
 
 # ── audio in ────────────────────────────────────────────────────────────────
 
-def _beep(sd, np, freq: int = 880, ms: int = 160, sr: int = 24000, vol: float = 0.3) -> None:
-    """A short sine ping through the default output device (fade in/out = no click)."""
-    n = int(sr * ms / 1000)
-    t = np.arange(n) / sr
-    tone = (vol * np.sin(2 * np.pi * freq * t)).astype(np.float32)
-    fade = max(1, int(sr * 0.01))
-    env = np.ones(n, dtype=np.float32)
-    env[:fade] = np.linspace(0, 1, fade)
-    env[-fade:] = np.linspace(1, 0, fade)
-    tone = (tone * env).reshape(-1, 1)
+def _beep(sd, np, freq: int = 1000, ms: int = 220, sr: int = 48000, vol: float = 0.45) -> None:
+    """An audible ping through the default output device. 48 kHz (what most default
+    devices actually run at) + a winsound fallback so it's never silent."""
     try:
-        sd.play(tone, sr, device=None)
+        n = int(sr * ms / 1000)
+        t = np.arange(n) / sr
+        tone = (vol * np.sin(2 * np.pi * freq * t)).astype(np.float32)
+        fade = max(1, int(sr * 0.01))
+        env = np.ones(n, dtype=np.float32)
+        env[:fade] = np.linspace(0, 1, fade)
+        env[-fade:] = np.linspace(1, 0, fade)
+        sd.play((tone * env).reshape(-1, 1), sr, device=None)
         sd.wait()
+        return
     except Exception as e:  # noqa: BLE001
-        logger.debug(f"beep failed: {e}")
+        logger.debug(f"sounddevice beep failed ({e}) — trying winsound")
+    try:
+        import winsound
+        winsound.Beep(int(freq), int(ms))
+    except Exception as e:  # noqa: BLE001
+        logger.debug(f"winsound beep failed: {e}")
+
+
+class _LiveLine:
+    """A single self-overwriting terminal line (on stderr) for live partials, so
+    it never pollutes the final transcript printed to stdout."""
+
+    def __init__(self, enabled=True):
+        self.enabled = enabled
+        self._prev = 0
+
+    def show(self, msg: str) -> None:
+        if not self.enabled:
+            return
+        pad = " " * max(0, self._prev - len(msg))
+        sys.stderr.write("\r" + msg + pad)
+        sys.stderr.flush()
+        self._prev = len(msg)
+
+    def clear(self) -> None:
+        if self.enabled and self._prev:
+            sys.stderr.write("\r" + " " * self._prev + "\r")
+            sys.stderr.flush()
+        self._prev = 0
 
 
 def _transcribe(model, np, frames, language):
@@ -217,8 +252,12 @@ def _transcribe(model, np, frames, language):
 
 
 def _capture(model, np, sd, webrtcvad, *, language, stop_words=None,
-             max_seconds=45.0, idle_seconds=6.0, single=False):
+             max_seconds=45.0, idle_seconds=6.0, single=False, live=True):
     """Open the mic and VAD-cut utterances, transcribing each.
+
+    Shows a self-updating live line with the partial transcription WHILE you
+    speak (throttled, off a background thread so capture never stalls), then the
+    finalized utterance + its transcription latency (handy to compare CPU vs GPU).
 
     If ``single`` — return the first utterance's text (for yes/no).
     Else accumulate until a stop word is heard (or idle/max timeout), returning
@@ -236,14 +275,27 @@ def _capture(model, np, sd, webrtcvad, *, language, stop_words=None,
     started = time.time()
     last_activity = time.time()
 
+    liner = _LiveLine(enabled=live)
+    partial_busy = threading.Event()
+    last_partial_len = 0
+
+    def _partial(frames_snapshot):
+        try:
+            txt = _transcribe(model, np, frames_snapshot, language)
+            if txt:
+                liner.show(f"🎙 … {txt}")
+        finally:
+            partial_busy.clear()
+
     try:
         stream = sd.RawInputStream(samplerate=VAD_RATE, blocksize=FRAME_LEN, dtype="int16",
                                    channels=1, device=None, callback=cb)
     except Exception as e:  # noqa: BLE001
         logger.error(f"Could not open the microphone: {e}")
-        return "" if single else ""
+        return ""
 
     with stream:
+        liner.show("🎙 listening…")
         while True:
             now = time.time()
             if now - started > max_seconds:
@@ -266,27 +318,45 @@ def _capture(model, np, sd, webrtcvad, *, language, stop_words=None,
                 if not triggered:
                     triggered = True
                     voiced = []
+                    last_partial_len = 0
                 voiced.append(frame)
                 silence_ms = 0
                 last_activity = now
+                # Live partial: re-transcribe the growing utterance, throttled,
+                # one at a time (keeps the whisper model single-threaded).
+                if (len(voiced) - last_partial_len) >= PARTIAL_EVERY_FRAMES and not partial_busy.is_set():
+                    last_partial_len = len(voiced)
+                    partial_busy.set()
+                    threading.Thread(target=_partial, args=(list(voiced),), daemon=True).start()
             elif triggered:
                 voiced.append(frame)
                 silence_ms += FRAME_MS
                 if silence_ms >= SILENCE_MS:
+                    while partial_busy.is_set():   # don't run two transcribes at once
+                        time.sleep(0.02)
+                    liner.clear()
                     dur_ms = len(voiced) * FRAME_MS
+                    t0 = time.time()
                     text = _transcribe(model, np, voiced, language) if dur_ms >= MIN_UTTER_MS else ""
+                    lat = time.time() - t0
                     voiced, triggered, silence_ms = [], False, 0
                     last_activity = time.time()
                     if not text:
+                        liner.show("🎙 listening…")
                         continue
-                    logger.info(f"🎧 heard: {text!r}")
+                    logger.info(f"🎧 heard ({dur_ms/1000:.1f}s audio → {lat:.1f}s): {text!r}")
                     if single:
                         return text
                     cleaned, hit = _split_on_stopword(text, stop_words or ())
                     if cleaned:
                         parts.append(cleaned)
+                    if parts:
+                        sys.stderr.write(f"   ↳ so far: {' '.join(parts)}\n")
+                        sys.stderr.flush()
                     if hit:
                         break
+                    liner.show("🎙 listening…")
+    liner.clear()
     return " ".join(parts).strip()
 
 
