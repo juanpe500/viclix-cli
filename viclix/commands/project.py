@@ -155,6 +155,20 @@ def _choose_template_ref():
     return ref.strip() if ref else None
 
 
+def _print_init_next_steps():
+    """Post-init cheat sheet: the commands users reach for most, from this folder."""
+    print(f"\n{C_BOLD}{C_CYAN}Handy commands from this folder:{C_RESET}")
+    rows = [
+        ("viclix dash",   "Open the project dashboard (just opened for you)"),
+        ("viclix open",   "Open your live app in the browser"),
+        ("viclix run",    "Run the app locally"),
+        ("viclix deploy", "Push your changes and redeploy"),
+        ("viclix env",    "Manage environment variables"),
+    ]
+    for cmd, desc in rows:
+        print(f"  {C_GREEN}{cmd:<13}{C_RESET} {desc}")
+
+
 def cmd_init(args, cfg):
     base_url = cfg['base_url']
     account_token = cfg['account_token']
@@ -350,6 +364,17 @@ def cmd_init(args, cfg):
 
     if data.get('project_url'):
         logger.info(f"Project URL: {data['project_url']}")
+
+    # After an interactive init, open the dashboard project page (same target as
+    # `viclix dash`) and leave a short cheat sheet — skipped in CI/piped runs,
+    # where there's no TTY and no browser to launch.
+    if _interactive():
+        dash = _dashboard_base(cfg.get('base_url'))
+        dash_url = f"{dash}/project/{project_id}"
+        logger.info(f"Opening your project dashboard: {dash_url}")
+        if not _open_url(dash_url):
+            logger.warning(f"Couldn't open a browser automatically — visit {dash_url}")
+        _print_init_next_steps()
 
 
 # ── Delete a project (viclix delete) ────────────────────────────────────────
