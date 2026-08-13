@@ -293,6 +293,10 @@ def run_say_argv(argv) -> None:
     ap.add_argument('--voice', help='exact Edge TTS voice id, e.g. es-ES-AlvaroNeural (overrides --lang)')
     ap.add_argument('--lang', help='es | en | mix  (default: mix — reads both languages)')
     ap.add_argument('--rate', help='speed like "+20%%" or "-10%%"  (""=normal; default +10%%)')
+    ap.add_argument('--listen', action='store_true',
+                    help='after speaking, beep and listen for a spoken reply (needs viclix[voice])')
+    ap.add_argument('--stop', help='listen: comma-separated stop words (default: send,puto)')
+    ap.add_argument('--model', help='listen: whisper model size (default: small)')
     ap.add_argument('text', nargs='*', help='the text to speak (quote it); omit to read stdin')
     ns = ap.parse_args(list(argv))
 
@@ -304,7 +308,50 @@ def run_say_argv(argv) -> None:
     a.voice = ns.voice
     a.lang = ns.lang
     a.rate = ns.rate
+    a.listen = ns.listen
+    a.stop = ns.stop
+    a.model = ns.model
     cmd_say(a)
+
+
+def resolve_voice(voice=None, lang=None) -> str:
+    """A concrete Edge TTS voice id from an explicit --voice or a --lang shortcut."""
+    v = (voice or '').strip()
+    if v:
+        return v
+    return VOICES.get((lang or DEFAULT_LANG).strip().lower(), VOICES[DEFAULT_LANG])
+
+
+def speak(text: str, *, voice=None, lang=None, rate=None, quiet: bool = False) -> None:
+    """Speak text aloud, streamed sentence-by-sentence, through the default output
+    device. Reusable by other commands (e.g. `listen` confirmations). Raises on a
+    hard playback error; callers that must not fail can wrap it."""
+    text = (text or '').strip()
+    if not text:
+        return
+    edge_tts, miniaudio, np, sd = _import_audio()
+    v = resolve_voice(voice, lang)
+    r = DEFAULT_RATE if rate is None else rate.strip()
+
+    chunks = _chunk_text(_clean(text))
+    if not chunks:
+        return
+    player = _StreamingPlayer(sd, np)
+    if not quiet:
+        logger.info(f"🗣  Speaking ({v}, {len(text)} chars, {len(chunks)} chunk(s))…")
+    try:
+        # Generate + submit in order; the first chunk starts playing while the
+        # rest synthesize (playback runs on PortAudio's callback thread).
+        for i, chunk in enumerate(chunks):
+            mp3 = _get_mp3(edge_tts, chunk, v, r)
+            if not mp3:
+                logger.warning(f"chunk {i + 1}/{len(chunks)} produced no audio — skipping")
+                continue
+            player.submit(_decode(miniaudio, np, mp3))
+        player.mark_done()
+        player.wait()
+    finally:
+        player.close()
 
 
 def cmd_say(args) -> None:
@@ -313,40 +360,18 @@ def cmd_say(args) -> None:
     if not text:
         logger.error('Nothing to say. Usage: viclix say "your text here"  (or pipe text in).')
         sys.exit(1)
-
-    edge_tts, miniaudio, np, sd = _import_audio()
-
-    voice = (getattr(args, 'voice', None) or '').strip()
-    if not voice:
-        lang = (getattr(args, 'lang', None) or DEFAULT_LANG).strip().lower()
-        voice = VOICES.get(lang, VOICES[DEFAULT_LANG])
-    rate = getattr(args, 'rate', None)
-    rate = DEFAULT_RATE if rate is None else rate.strip()
-
-    text = _clean(text)
-    chunks = _chunk_text(text)
-    if not chunks:
-        logger.error("Nothing to say after cleaning the text.")
-        sys.exit(1)
-
-    player = _StreamingPlayer(sd, np)
-    logger.info(f"🗣  Speaking ({voice}, {len(text)} chars, {len(chunks)} chunk(s))…")
     try:
-        # Generate + submit in order; the first chunk starts playing while the
-        # rest synthesize (playback runs on PortAudio's callback thread).
-        for i, chunk in enumerate(chunks):
-            mp3 = _get_mp3(edge_tts, chunk, voice, rate)
-            if not mp3:
-                logger.warning(f"chunk {i + 1}/{len(chunks)} produced no audio — skipping")
-                continue
-            player.submit(_decode(miniaudio, np, mp3))
-        player.mark_done()
-        player.wait()
+        speak(text, voice=getattr(args, 'voice', None), lang=getattr(args, 'lang', None),
+              rate=getattr(args, 'rate', None))
     except KeyboardInterrupt:
         logger.info("interrupted")
     except Exception as e:  # noqa: BLE001 — PortAudio / device errors
         logger.error(f"Playback failed: {e}")
         logger.debug("Is an output device available? 'say' plays through the OS default.")
         sys.exit(1)
-    finally:
-        player.close()
+
+    # Optional: after speaking, beep and listen for a spoken reply.
+    if getattr(args, 'listen', False):
+        from .listen import run_listen
+        run_listen(stop_words=getattr(args, 'stop', None),
+                   model_size=getattr(args, 'model', None))
