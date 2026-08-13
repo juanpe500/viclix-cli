@@ -114,17 +114,27 @@ def cmd_dash(args):
         logger.warning("Couldn't launch a browser automatically — open the URL above manually.")
 
 
-def _pick_starter_runtime(default='fastapi'):
-    """Ask which runtime to scaffold in an empty folder (nothing to auto-detect).
-    Non-interactive, or no pick → the default (fastapi)."""
+def _choose_empty_start(default_runtime='fastapi'):
+    """Empty-folder interactive start: clone a template repo, or scaffold a fresh
+    runtime. Returns ('template', ref) or ('runtime', runtime_id).
+    Non-interactive, or no selection → ('runtime', fastapi)."""
     if not _interactive():
-        return default
-    labels = [f"{label}  {C_YELLOW}({blurb}){C_RESET}" for _id, label, blurb in SCAFFOLD_RUNTIMES]
-    idx = _menu("Empty folder — which runtime should we start from?", labels)
+        return ('runtime', default_runtime)
+    template_opt = "Clone a template repo (paste a git URL / owner-repo)"
+    labels = [template_opt] + [
+        f"{label}  {C_YELLOW}({blurb}){C_RESET}" for _id, label, blurb in SCAFFOLD_RUNTIMES
+    ]
+    idx = _menu("Empty folder — how do you want to start?", labels)
     if idx is None:
-        logger.info(f"No selection — using {default}.")
-        return default
-    return SCAFFOLD_RUNTIMES[idx][0]
+        logger.info(f"No selection — using {default_runtime}.")
+        return ('runtime', default_runtime)
+    if idx == 0:
+        ref = _ask(f"{C_YELLOW}Template repo (git URL or owner/repo): {C_RESET}")
+        if not ref:
+            logger.info(f"No template given — using {default_runtime}.")
+            return ('runtime', default_runtime)
+        return ('template', ref.strip())
+    return ('runtime', SCAFFOLD_RUNTIMES[idx - 1][0])
 
 
 def cmd_init(args, cfg):
@@ -160,16 +170,25 @@ def cmd_init(args, cfg):
     # OUT — every real path here is git-backed and sandbox doesn't fit that loop
     # yet. Revisit if a throwaway/no-git use case shows up.
     template = (getattr(args, 'template', None) or '').strip()
+    is_empty = (not git_remote_url('origin') and not os.path.exists('.git')
+                and not _dir_has_code())
     if template:
         apply_template(template, args.branch, github_token)
-    elif not git_remote_url('origin') and not os.path.exists('.git') and not _dir_has_code():
-        # An explicit --runtime is honored; otherwise ask (nothing to detect here).
+    elif is_empty:
+        # An explicit --runtime is honored; otherwise ask: template or fresh starter.
         runtime = (args.runtime or 'auto').strip().lower()
-        if runtime == 'auto':
-            runtime = _pick_starter_runtime()
-        write_default_starter(name, runtime)
-        args.runtime = runtime  # persist the concrete pick into the create payload
-        logger.info(f"Empty folder — added a minimal {runtime} starter to deploy.")
+        if runtime != 'auto':
+            write_default_starter(name, runtime)
+            args.runtime = runtime
+            logger.info(f"Empty folder — added a minimal {runtime} starter to deploy.")
+        else:
+            kind, value = _choose_empty_start()
+            if kind == 'template':
+                apply_template(value, args.branch, github_token)
+            else:
+                write_default_starter(name, value)
+                args.runtime = value  # persist the concrete pick into the create payload
+                logger.info(f"Empty folder — added a minimal {value} starter to deploy.")
 
     # Decide where the code lives.
     #   --repo given          → trust it
