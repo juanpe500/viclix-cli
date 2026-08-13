@@ -297,6 +297,7 @@ def run_say_argv(argv) -> None:
                     help='after speaking, beep and listen for a spoken reply (needs viclix[voice])')
     ap.add_argument('--stop', help='listen: comma-separated stop words (default: send,puto)')
     ap.add_argument('--model', help='listen: whisper model size (default: small)')
+    ap.add_argument('--device', help='listen: auto | cuda | cpu (default: auto — CPU if no cuDNN)')
     ap.add_argument('text', nargs='*', help='the text to speak (quote it); omit to read stdin')
     ns = ap.parse_args(list(argv))
 
@@ -311,6 +312,7 @@ def run_say_argv(argv) -> None:
     a.listen = ns.listen
     a.stop = ns.stop
     a.model = ns.model
+    a.device = ns.device
     cmd_say(a)
 
 
@@ -374,4 +376,5 @@ def cmd_say(args) -> None:
     if getattr(args, 'listen', False):
         from .listen import run_listen
         run_listen(stop_words=getattr(args, 'stop', None),
-                   model_size=getattr(args, 'model', None))
+                   model_size=getattr(args, 'model', None),
+                   device=getattr(args, 'device', None) or 'auto')

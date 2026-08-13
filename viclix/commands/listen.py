@@ -84,8 +84,31 @@ def _register_cuda_dlls() -> None:
             os.environ["PATH"] = str(bindir) + os.pathsep + os.environ.get("PATH", "")
 
 
-def _load_model(size: str, np):
-    """Load faster-whisper, preferring CUDA (float16), falling back to CPU (int8)."""
+def _cudnn_present() -> bool:
+    """Is a cuDNN ops DLL that ctranslate2 needs actually on the DLL path?
+
+    ctranslate2's CUDA backend HARD-ABORTS the process (not a catchable Python
+    exception) when cuDNN is missing — as JP hit: "Could not locate
+    cudnn_ops64_9.dll". So in auto mode we must not even attempt CUDA unless the
+    DLL is present. `_register_cuda_dlls()` must run first so the pip-wheel bin
+    dirs are searched."""
+    import glob
+    from pathlib import Path
+    dirs = []
+    for base in map(Path, sys.path):
+        nv = base / "nvidia"
+        if nv.is_dir():
+            dirs += [str(p) for p in nv.glob("*/bin")]
+    dirs += [d for d in os.environ.get("PATH", "").split(os.pathsep) if d]
+    for d in dirs:
+        # v9 merged naming (cudnn_ops64_9.dll) or the base runtime dll.
+        if glob.glob(os.path.join(d, "cudnn_ops64_*.dll")) or glob.glob(os.path.join(d, "cudnn64_*.dll")):
+            return True
+    return False
+
+
+def _load_model(size: str, np, device: str = "auto"):
+    """Load faster-whisper. device: auto (CUDA if cuDNN present, else CPU) | cuda | cpu."""
     _register_cuda_dlls()
     try:
         from faster_whisper import WhisperModel
@@ -93,17 +116,30 @@ def _load_model(size: str, np):
         logger.error(_MISSING_HINT)
         sys.exit(1)
     warmup = np.zeros(VAD_RATE, dtype=np.float32)
-    try:
-        m = WhisperModel(size, device="cuda", compute_type="float16")
-        list(m.transcribe(warmup, beam_size=1)[0])  # force CUDA kernels to compile
-        logger.info(f"🧠 whisper '{size}' on CUDA (float16)")
-        return m
-    except Exception as e:  # noqa: BLE001
-        logger.warning(f"CUDA path failed ({e}) — falling back to CPU")
-        m = WhisperModel(size, device="cpu", compute_type="int8")
-        list(m.transcribe(warmup, beam_size=1)[0])
-        logger.info(f"🧠 whisper '{size}' on CPU (int8)")
-        return m
+
+    want_cuda = device in ("auto", "cuda")
+    if want_cuda and device == "auto" and not _cudnn_present():
+        logger.warning("CUDA cuDNN not found — using CPU. For GPU speed install the wheels:")
+        logger.warning('    pip install "nvidia-cudnn-cu12>=9" "nvidia-cublas-cu12>=12.4"')
+        want_cuda = False
+
+    if want_cuda:
+        try:
+            m = WhisperModel(size, device="cuda", compute_type="float16")
+            list(m.transcribe(warmup, beam_size=1)[0])  # force CUDA kernels to compile
+            logger.info(f"🧠 whisper '{size}' on CUDA (float16)")
+            return m
+        except Exception as e:  # noqa: BLE001
+            if device == "cuda":
+                logger.error(f"CUDA was requested but failed to init: {e}")
+                logger.error('Install/repair the GPU wheels: pip install "nvidia-cudnn-cu12>=9" "nvidia-cublas-cu12>=12.4"')
+                sys.exit(1)
+            logger.warning(f"CUDA path failed ({e}) — falling back to CPU")
+
+    m = WhisperModel(size, device="cpu", compute_type="int8")
+    list(m.transcribe(warmup, beam_size=1)[0])
+    logger.info(f"🧠 whisper '{size}' on CPU (int8)")
+    return m
 
 
 # ── text helpers ────────────────────────────────────────────────────────────
@@ -257,7 +293,7 @@ def _capture(model, np, sd, webrtcvad, *, language, stop_words=None,
 # ── orchestration ───────────────────────────────────────────────────────────
 
 def run_listen(*, stop_words=None, model_size=None, language=None,
-               confirm=True, voice=None, rate=None) -> dict:
+               confirm=True, voice=None, rate=None, device="auto") -> dict:
     """Beep, dictate until a stop word, confirm, then copy to clipboard + print.
 
     Returns {"text": str, "confirmed": bool}. Also PRINTS the final text to
@@ -270,7 +306,7 @@ def run_listen(*, stop_words=None, model_size=None, language=None,
     size = (model_size or DEFAULT_MODEL).strip()
 
     logger.info(f"Loading whisper '{size}' … (stop words: {', '.join(stops)})")
-    model = _load_model(size, np)
+    model = _load_model(size, np, (device or "auto").strip().lower())
 
     from . import say  # spoken feedback reuses the say pipeline
 
@@ -325,6 +361,7 @@ def cmd_listen(args) -> None:
             confirm=not getattr(args, 'no_confirm', False),
             voice=getattr(args, 'voice', None),
             rate=getattr(args, 'rate', None),
+            device=getattr(args, 'device', None) or 'auto',
         )
     except KeyboardInterrupt:
         logger.info("interrupted")

@@ -211,6 +211,7 @@ def build_parser():
     g_say.add_argument('--stop', help='listen: comma-separated stop words that end capture (default: send,puto)')
     g_say.add_argument('--model', help='listen: whisper model size (tiny/base/small/medium/large; default: small)')
     g_say.add_argument('--no-confirm', action='store_true', help='listen: skip the spoken "did you say…" confirmation')
+    g_say.add_argument('--device', help='listen: auto | cuda | cpu (default: auto — falls back to CPU if no cuDNN)')
 
     g_run = parser.add_argument_group('local run (run / local)')
     g_run.add_argument('--port', type=int,

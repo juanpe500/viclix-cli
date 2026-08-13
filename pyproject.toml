@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "viclix"
-version = "0.1.74"
+version = "0.1.75"
 description = "Official Viclix CLI — deploy and manage Viclix projects from your terminal."
 readme = "README.md"
 requires-python = ">=3.8"
@@ -34,6 +34,18 @@ voice = [
     "sounddevice>=0.4.6",
     "numpy>=1.24",
     "pyperclip>=1.8.2",
+]
+# `viclix listen` with GPU — same as [voice] plus the NVIDIA CUDA runtime wheels
+# (cuDNN 9 / cuBLAS 12). Without these, listen still works on CPU.
+#   pip install "viclix[voice-gpu]"
+voice-gpu = [
+    "faster-whisper>=1.0.0",
+    "webrtcvad-wheels>=2.0.14",
+    "sounddevice>=0.4.6",
+    "numpy>=1.24",
+    "pyperclip>=1.8.2",
+    "nvidia-cublas-cu12>=12.4",
+    "nvidia-cudnn-cu12>=9",
 ]
 
 [project.urls]

@@ -14,3 +14,12 @@ webrtcvad-wheels>=2.0.14
 sounddevice>=0.4.6
 numpy>=1.24
 pyperclip>=1.8.2
+
+[voice-gpu]
+faster-whisper>=1.0.0
+webrtcvad-wheels>=2.0.14
+sounddevice>=0.4.6
+numpy>=1.24
+pyperclip>=1.8.2
+nvidia-cublas-cu12>=12.4
+nvidia-cudnn-cu12>=9

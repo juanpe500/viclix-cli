@@ -1,6 +1,6 @@
 Metadata-Version: 2.4
 Name: viclix
-Version: 0.1.74
+Version: 0.1.75
 Summary: Official Viclix CLI — deploy and manage Viclix projects from your terminal.
 Author: Sizth, LLC
 Project-URL: Homepage, https://viclix.com
@@ -22,6 +22,14 @@ Requires-Dist: webrtcvad-wheels>=2.0.14; extra == "voice"
 Requires-Dist: sounddevice>=0.4.6; extra == "voice"
 Requires-Dist: numpy>=1.24; extra == "voice"
 Requires-Dist: pyperclip>=1.8.2; extra == "voice"
+Provides-Extra: voice-gpu
+Requires-Dist: faster-whisper>=1.0.0; extra == "voice-gpu"
+Requires-Dist: webrtcvad-wheels>=2.0.14; extra == "voice-gpu"
+Requires-Dist: sounddevice>=0.4.6; extra == "voice-gpu"
+Requires-Dist: numpy>=1.24; extra == "voice-gpu"
+Requires-Dist: pyperclip>=1.8.2; extra == "voice-gpu"
+Requires-Dist: nvidia-cublas-cu12>=12.4; extra == "voice-gpu"
+Requires-Dist: nvidia-cudnn-cu12>=9; extra == "voice-gpu"
 
 # viclix
 
