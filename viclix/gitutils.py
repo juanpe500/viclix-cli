@@ -185,6 +185,15 @@ SCAFFOLD_RUNTIMES = [
 ]
 SCAFFOLD_RUNTIME_IDS = [r[0] for r in SCAFFOLD_RUNTIMES]
 
+# Curated starter repos we host so users can pick one instead of hunting for a
+# URL. Each entry: (ref, label, one-line blurb). `ref` is passed straight to
+# apply_template (owner/repo or a full git URL), so adding a template here is a
+# one-line change. Shown as a sub-menu under "Clone a template repo".
+VICLIX_TEMPLATES = [
+    ('juanpe500/fastapi-mega-template', 'FastAPI Mega Template',
+     'batteries-included FastAPI starter'),
+]
+
 # The app name is injected into code files via this token (avoids str.format
 # brace-escaping headaches in JS/Go/JSX). package.json/go.mod use a slug instead.
 _APP = '__VICLIX_APP_NAME__'

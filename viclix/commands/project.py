@@ -43,6 +43,7 @@ from ..gitutils import (
     git_remote_url, git_current_branch, setup_git_repo, push_existing,
     normalize_to_https, strip_credentials, embed_token, _norm_repo,
     apply_template, write_default_starter, _dir_has_code, SCAFFOLD_RUNTIMES,
+    VICLIX_TEMPLATES,
 )
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -120,7 +121,7 @@ def _choose_empty_start(default_runtime='fastapi'):
     Non-interactive, or no selection → ('runtime', fastapi)."""
     if not _interactive():
         return ('runtime', default_runtime)
-    template_opt = "Clone a template repo (paste a git URL / owner-repo)"
+    template_opt = "Clone a template repo (our presets, or paste your own)"
     labels = [template_opt] + [
         f"{label}  {C_YELLOW}({blurb}){C_RESET}" for _id, label, blurb in SCAFFOLD_RUNTIMES
     ]
@@ -129,12 +130,29 @@ def _choose_empty_start(default_runtime='fastapi'):
         logger.info(f"No selection — using {default_runtime}.")
         return ('runtime', default_runtime)
     if idx == 0:
-        ref = _ask(f"{C_YELLOW}Template repo (git URL or owner/repo): {C_RESET}")
+        ref = _choose_template_ref()
         if not ref:
             logger.info(f"No template given — using {default_runtime}.")
             return ('runtime', default_runtime)
-        return ('template', ref.strip())
+        return ('template', ref)
     return ('runtime', SCAFFOLD_RUNTIMES[idx - 1][0])
+
+
+def _choose_template_ref():
+    """Pick a template to clone: one of our curated presets, or a repo the user
+    pastes. Returns the ref (owner/repo or git URL) for apply_template, or None
+    if nothing was chosen. Assumes an interactive session (caller gates)."""
+    paste_opt = "Paste a git URL / owner-repo"
+    labels = [
+        f"{label}  {C_YELLOW}({blurb}){C_RESET}" for _ref, label, blurb in VICLIX_TEMPLATES
+    ] + [paste_opt]
+    idx = _menu("Clone a template repo — pick one:", labels)
+    if idx is None:
+        return None
+    if idx < len(VICLIX_TEMPLATES):
+        return VICLIX_TEMPLATES[idx][0]
+    ref = _ask(f"{C_YELLOW}Template repo (git URL or owner/repo): {C_RESET}")
+    return ref.strip() if ref else None
 
 
 def cmd_init(args, cfg):
