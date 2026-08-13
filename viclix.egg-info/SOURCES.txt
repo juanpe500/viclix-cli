@@ -22,4 +22,5 @@ viclix/commands/download.py
 viclix/commands/inspect.py
 viclix/commands/project.py
 viclix/commands/run.py
+viclix/commands/say.py
 viclix/commands/skill.py

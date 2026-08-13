@@ -1,3 +1,9 @@
 requests>=2.20
 questionary>=1.10
 textual>=0.60
+
+[say]
+edge-tts>=6.1.0
+sounddevice>=0.4.6
+numpy>=1.24
+miniaudio>=1.59

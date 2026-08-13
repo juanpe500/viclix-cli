@@ -30,6 +30,7 @@ from .commands.inspect import (
 )
 from .commands.agents import (cmd_agent_run_status, cmd_agents, cmd_fleet,
                               cmd_approve_reject, cmd_fan_out)
+from .commands.say import run_say_argv
 
 
 
@@ -51,6 +52,7 @@ COMMANDS = [
     'db-snapshot', 'db-snapshots', 'db-restore', 'db-exec',
     'agent-run', 'agent-status', 'agents', 'fleet',
     'approvals', 'approve', 'reject', 'fan-out',
+    'say',
 ]
 
 EPILOG = """\
@@ -83,6 +85,7 @@ commands:
   approve / reject           approve <id> (runs it) or reject <id> a proposed agent action
   agent-run "goal" [--wait]  headless coding run in THIS project (--wait polls to done; --mode plan|full)
   fan-out "goal" --projects a,b,c    launch the same coding run across many projects (--wait waits for all)
+  say "text..."              speak text aloud (Edge TTS, streamed; default output device)
   skill                      print the CLI usage guide (for an AI driving the CLI)
 
 examples:
@@ -103,6 +106,8 @@ examples:
   viclix deploy --full
   viclix deploy --no-wait
   viclix hotfix -i
+  viclix say "Done — deployed dashboard and cp, all green."
+  viclix say --lang en "Build finished."
 
 Flags are grouped above by the command that uses them.
 docs: https://dashboard.viclix.com/projects/new
@@ -194,6 +199,11 @@ def build_parser():
     g_logs.add_argument('--json', action='store_true',
                         help='agents: dump the raw conversation list instead of the interactive picker')
 
+    g_say = parser.add_argument_group('speech (say)')
+    g_say.add_argument('--voice', help='say: exact Edge TTS voice id (e.g. es-ES-AlvaroNeural); overrides --lang')
+    g_say.add_argument('--lang', help='say: es | en | mix (default: mix — a multilingual voice that reads both)')
+    g_say.add_argument('--rate', help='say: speech speed like "+20%%" or "-10%%" ("" = normal; default +10%%)')
+
     g_run = parser.add_argument_group('local run (run / local)')
     g_run.add_argument('--port', type=int,
                        help='port to serve on (default: 9100, auto-increments if busy)')
@@ -227,6 +237,16 @@ def build_parser():
 
 def main():
     print(ASCII_ART)
+
+    # `say` gets its own parser (fast-path) so its flags work before OR after the
+    # text — the shared parser below can't backfill a positional that follows an
+    # option. Kept fully local: no account/config needed.
+    import sys as _sys
+    _argv = _sys.argv[1:]
+    if _argv and _argv[0] == 'say':
+        run_say_argv(_argv[1:])
+        return
+
     parser = build_parser()
     args = parser.parse_args()
 
