@@ -936,7 +936,7 @@ def _build_app(base_url, token, project_id):
         def _tick_think(self):
             elapsed = time.monotonic() - self._think_start
             spin = self.SPINNER[int(elapsed * 10) % len(self.SPINNER)]
-            self.query_one("#thinking", Static).update(f"[b]{spin}[/] {self._phase}… {elapsed:.1f}s")
+            self.query_one("#thinking", Static).update(f"[b]{spin}[/] {self._phase}… {elapsed:.0f}s")
 
         def _stop_thinking(self):
             if self._think_timer is not None:
