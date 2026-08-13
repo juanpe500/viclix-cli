@@ -61,6 +61,7 @@ commands:
   disconnect                 clear all stored CLI credentials (account + GitHub); keeps .viclix
   whoami                     show who you're signed in as
   init                       register the current repo as a project and deploy it
+                             (empty folder → scaffolds a starter; --template <ref> clones one)
   link                       link this repo to an existing project (interactive; --project-key to share)
   open                       open this project's LIVE app URL (custom domain aware) (viclix open [id])
   dash                       open this project's dashboard page in your browser (viclix dash [id])
@@ -92,6 +93,8 @@ examples:
   viclix dash
   viclix skill
   viclix agents
+  viclix init                                     (in an empty folder → starter app)
+  viclix init --template youruser/fastapi-template
   viclix init --db sqlite --env-file .env --static /static/
   viclix init --runtime static --build "npm run build" --output dist
   viclix config run
@@ -135,6 +138,10 @@ def build_parser():
                              "Administration RW (to create) + Contents RW")
     g_proj.add_argument('--ssh-key-file', help='path to a private SSH deploy key to clone a private repo (init)')
     g_proj.add_argument('--branch', help='branch (defaults to the current branch)')
+    g_proj.add_argument('--template',
+                        help='init: start an empty folder from a template repo (git URL or '
+                             'owner/repo). Clones it in, drops its history, and creates your '
+                             'own repo. Empty folder + no --template → a minimal starter app.')
     g_proj.add_argument('--runtime', default='auto',
                         help='runtime: auto|fastapi|static|node|nextjs|go|django|docker (default: auto — detects the stack from your repo)')
     g_proj.add_argument('--build', help='override the build step (static/node/go), e.g. "npm run build"')

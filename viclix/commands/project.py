@@ -42,6 +42,7 @@ from ..github import (
 from ..gitutils import (
     git_remote_url, git_current_branch, setup_git_repo, push_existing,
     normalize_to_https, strip_credentials, embed_token, _norm_repo,
+    apply_template, write_default_starter, _dir_has_code, SCAFFOLD_RUNTIMES,
 )
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -113,6 +114,19 @@ def cmd_dash(args):
         logger.warning("Couldn't launch a browser automatically — open the URL above manually.")
 
 
+def _pick_starter_runtime(default='fastapi'):
+    """Ask which runtime to scaffold in an empty folder (nothing to auto-detect).
+    Non-interactive, or no pick → the default (fastapi)."""
+    if not _interactive():
+        return default
+    labels = [f"{label}  {C_YELLOW}({blurb}){C_RESET}" for _id, label, blurb in SCAFFOLD_RUNTIMES]
+    idx = _menu("Empty folder — which runtime should we start from?", labels)
+    if idx is None:
+        logger.info(f"No selection — using {default}.")
+        return default
+    return SCAFFOLD_RUNTIMES[idx][0]
+
+
 def cmd_init(args, cfg):
     base_url = cfg['base_url']
     account_token = cfg['account_token']
@@ -132,6 +146,30 @@ def cmd_init(args, cfg):
             sys.exit(1)
 
     name = args.name or os.path.basename(os.getcwd())
+
+    # ── Seed local code when there's nothing to deploy yet ──────────────────
+    # Both paths leave files in the folder with NO remote, so the no-remote
+    # branch below creates the repo and pushes — the project is git-backed like
+    # any other.
+    #   --template <ref>      → clone that starter into this empty folder
+    #   empty folder, no repo → drop in a minimal working app (the chosen
+    #                           default: scaffold + git-back, never a broken
+    #                           empty deploy)
+    # NOTE (pending): a repo-less `viclix sandbox` (the server's create-sandbox
+    # primitive, git-less, source lives in the container) was deliberately left
+    # OUT — every real path here is git-backed and sandbox doesn't fit that loop
+    # yet. Revisit if a throwaway/no-git use case shows up.
+    template = (getattr(args, 'template', None) or '').strip()
+    if template:
+        apply_template(template, args.branch, github_token)
+    elif not git_remote_url('origin') and not os.path.exists('.git') and not _dir_has_code():
+        # An explicit --runtime is honored; otherwise ask (nothing to detect here).
+        runtime = (args.runtime or 'auto').strip().lower()
+        if runtime == 'auto':
+            runtime = _pick_starter_runtime()
+        write_default_starter(name, runtime)
+        args.runtime = runtime  # persist the concrete pick into the create payload
+        logger.info(f"Empty folder — added a minimal {runtime} starter to deploy.")
 
     # Decide where the code lives.
     #   --repo given          → trust it
