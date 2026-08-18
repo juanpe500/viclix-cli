@@ -102,6 +102,120 @@ def _detect(serve, port_override):
     sys.exit(1)
 
 
+def _bare_entry(mid):
+    """Minimal picker entry (no metadata) — the fallback when enrichment fails."""
+    return {
+        "id": mid, "name": mid, "created": 0, "context_length": 0,
+        "architecture": {"input_modalities": ["text"], "output_modalities": ["text"]},
+        "supported_parameters": [], "reasoning": None,
+        "pricing": {"prompt": "0", "completion": "0"},
+    }
+
+
+def _entry(mid, ctx=0, tools=False, vision=False, reasoning=False):
+    """Build a picker-shaped model entry (matches _enrich_openai_style_models /
+    model_selector.js _facts: context_length, architecture, supported_parameters,
+    reasoning, free pricing)."""
+    supported = []
+    if tools:
+        supported.append("tools")
+    if reasoning:
+        supported.append("reasoning_effort")
+    return {
+        "id": mid, "name": mid, "created": 0,
+        "context_length": int(ctx or 0),
+        "architecture": {
+            "input_modalities": ["text", "image"] if vision else ["text"],
+            "output_modalities": ["text"],
+        },
+        "supported_parameters": supported,
+        "reasoning": {"mandatory": False} if reasoning else None,
+        "pricing": {"prompt": "0", "completion": "0"},  # local = free
+    }
+
+
+def _enrich_ollama(port, ids):
+    """Per-model context + capabilities from Ollama's native POST /api/show."""
+    base = f"http://127.0.0.1:{port}"
+    out = []
+    for mid in ids:
+        try:
+            r = requests.post(f"{base}/api/show", json={"model": mid}, timeout=5)
+            if r.status_code != 200:
+                out.append(_bare_entry(mid))
+                continue
+            d = r.json() or {}
+            caps = set(d.get("capabilities") or [])
+            ctx = 0
+            for k, v in (d.get("model_info") or {}).items():
+                if k.endswith(".context_length") and isinstance(v, int):
+                    ctx = v
+                    break
+            out.append(_entry(mid, ctx=ctx, tools="tools" in caps,
+                              vision="vision" in caps,
+                              reasoning="thinking" in caps or "reasoning" in caps))
+        except (requests.RequestException, ValueError):
+            out.append(_bare_entry(mid))
+    return out
+
+
+def _enrich_lmstudio(port, ids):
+    """Context + type (vlm→vision) from LM Studio's native GET /api/v0/models."""
+    base = f"http://127.0.0.1:{port}"
+    meta = {}
+    try:
+        r = requests.get(f"{base}/api/v0/models", timeout=5)
+        if r.status_code == 200:
+            for m in (r.json() or {}).get("data", []):
+                if m.get("id"):
+                    meta[m["id"]] = m
+    except (requests.RequestException, ValueError):
+        pass
+    out = []
+    for mid in ids:
+        m = meta.get(mid)
+        if not m:
+            out.append(_bare_entry(mid))
+            continue
+        ctx = m.get("max_context_length") or m.get("loaded_context_length") or 0
+        vision = (m.get("type") == "vlm")
+        # LM Studio doesn't report tool/reasoning support; leave conservative.
+        out.append(_entry(mid, ctx=ctx, vision=vision))
+    return out
+
+
+def _enrich_llamacpp(port, ids):
+    """Single-model context from llama.cpp's GET /props (n_ctx of the loaded model)."""
+    ctx = 0
+    try:
+        r = requests.get(f"http://127.0.0.1:{port}/props", timeout=5)
+        if r.status_code == 200:
+            d = r.json() or {}
+            ctx = (d.get("default_generation_settings") or {}).get("n_ctx") \
+                or d.get("n_ctx") or 0
+    except (requests.RequestException, ValueError):
+        pass
+    return [_entry(mid, ctx=ctx) for mid in ids]
+
+
+def _enrich_models(server_name, port, ids):
+    """Return a picker-shaped catalog for the local models, enriched with
+    context + capabilities from the server's native (non-OpenAI) endpoints. Falls
+    back to bare entries per model on any failure."""
+    if not ids:
+        return []
+    try:
+        if server_name == "ollama":
+            return _enrich_ollama(port, ids)
+        if server_name == "lmstudio":
+            return _enrich_lmstudio(port, ids)
+        if server_name == "llamacpp":
+            return _enrich_llamacpp(port, ids)
+    except Exception:  # noqa: BLE001 — enrichment is best-effort
+        pass
+    return [_bare_entry(mid) for mid in ids]
+
+
 def _pick_model(models, preselect):
     """Return the model id to register as the default. ``preselect`` (--model)
     wins; otherwise auto-pick a single model, or prompt among several."""
@@ -391,6 +505,15 @@ def cmd_local_model(args, cfg):
     model = _pick_model(models, getattr(args, "model", None))
     logger.info(f"Using local model: {model or '(agent picks)'}")
 
+    # Enrich the catalog (context + tools/vision/reasoning) from the server's
+    # native endpoints so the web picker shows real metadata — the OpenAI
+    # /v1/models list can't provide it.
+    catalog = _enrich_models(server_name, port, models)
+    _n_ctx = sum(1 for e in catalog if e.get("context_length"))
+    if catalog:
+        logger.info(f"Enriched {len(catalog)} model(s) "
+                    f"({_n_ctx} with context metadata).")
+
     token = secrets.token_urlsafe(32)
     upstream = f"http://127.0.0.1:{port}"
     proxy_srv, actual_proxy_port = _start_proxy(upstream, token, proxy_port)
@@ -413,6 +536,7 @@ def cmd_local_model(args, cfg):
             "default_model": model,
             "use_for_coding": use_coding,
             "use_for_agents": use_agents,
+            "models": catalog,  # enriched catalog for the web picker
         }
         res = api_register_local_provider(base_url, account_token, payload)
         if not res:
