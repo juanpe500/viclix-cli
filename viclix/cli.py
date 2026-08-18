@@ -32,6 +32,7 @@ from .commands.agents import (cmd_agent_run_status, cmd_agents, cmd_fleet,
                               cmd_approve_reject, cmd_fan_out)
 from .commands.say import run_say_argv
 from .commands.listen import cmd_listen
+from .commands.local_model import cmd_local_model
 
 
 
@@ -53,7 +54,7 @@ COMMANDS = [
     'db-snapshot', 'db-snapshots', 'db-restore', 'db-exec',
     'agent-run', 'agent-status', 'agents', 'fleet',
     'approvals', 'approve', 'reject', 'fan-out',
-    'say', 'listen',
+    'say', 'listen', 'local-model',
 ]
 
 EPILOG = """\
@@ -88,6 +89,7 @@ commands:
   fan-out "goal" --projects a,b,c    launch the same coding run across many projects (--wait waits for all)
   say "text..."              speak text aloud (Edge TTS, streamed; default output device)
   listen                     dictate a reply by voice → confirm → clipboard (Whisper; needs viclix[voice])
+  local-model                bridge a LOCAL model (Ollama/LM Studio/llama.cpp) to the agents via a tunnel
   skill                      print the CLI usage guide (for an AI driving the CLI)
 
 examples:
@@ -196,6 +198,8 @@ def build_parser():
     g_logs.add_argument('--method', help='probe: HTTP method (default GET)')
     g_logs.add_argument('--data', help='probe: request body')
     g_logs.add_argument('--mode', help='agent-run: plan(read-only, default)|manual|auto_edit|full')
+    g_logs.add_argument('--brain', help='agent-run: wear a brain (name or id) for this coding run')
+    g_logs.add_argument('--brain-version', help='agent-run: pin a brain snapshot/version (name or id)')
     g_logs.add_argument('--status', help='approvals: filter by status (pending, default; approved, '
                                          'rejected, executed, expired, all)')
     g_logs.add_argument('--agent', help='approvals: filter to one agent id')
@@ -240,6 +244,23 @@ def build_parser():
     g_exec.add_argument('--timeout', type=int, default=10, help='exec timeout 1-30 (default: 10)')
     g_exec.add_argument('--workdir', default='/app', help='working dir for exec (default: /app)')
     g_exec.add_argument('--packages', help='space-separated packages (pip-install)')
+
+    g_lm = parser.add_argument_group('local-model')
+    g_lm.add_argument('--serve', default='auto',
+                      help='local server: auto|ollama|lmstudio|llamacpp (default: auto)')
+    g_lm.add_argument('--provider', default='cloudflare',
+                      help='tunnel: cloudflare (default, no account) | ngrok')
+    g_lm.add_argument('--serve-port', type=int,
+                      help='port of the local model server (default: per --serve)')
+    g_lm.add_argument('--proxy-port', type=int,
+                      help='port for the local auth proxy (default: auto-picked)')
+    g_lm.add_argument('--coding', action='store_true',
+                      help='use the local model for the coding assistant only')
+    g_lm.add_argument('--agents', action='store_true',
+                      help='use the local model for automatic agents only')
+    g_lm.add_argument('--label', help='label for the stored credential (default: Local)')
+    # NOTE: --model (reused from the speech group) sets the default model id;
+    # --serve-port/--proxy-port avoid clashing with --port (local run).
 
     return parser
 
@@ -406,6 +427,9 @@ def main():
         return
     if args.command == 'fan-out':
         cmd_fan_out(args, cfg)
+        return
+    if args.command == 'local-model':
+        cmd_local_model(args, cfg)
         return
 
     # Everything else is a simple GET/POST against the endpoint table.

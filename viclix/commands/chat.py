@@ -778,7 +778,7 @@ def _build_app(base_url, token, project_id):
             item = event.item
             if getattr(item, "is_open", False):
                 try:
-                    webbrowser.open(f"{dash}/settings/ai-providers")
+                    webbrowser.open(f"{dash}/settings?tab=ai")
                 except Exception:
                     pass
                 self.dismiss(None)

@@ -348,3 +348,37 @@ def _authorize_viclix_db(base_url, token, project_id=None):
     logger.debug(f"DB authorize response: {data}")
     return data.get("database_url")
 
+
+# ── Local-model BYOK provider (viclix local-model) ──────────────────────────
+def api_register_local_provider(base_url, account_token, payload):
+    """Upsert the user's BYOK 'local' provider (public tunnel URL + shared token).
+
+    Account-level call (user-wide, not per-project), like agent/dispatch. Returns
+    the server's credential view on success or None on failure (logged)."""
+    try:
+        res = requests.post(f"{base_url}agent/provider",
+                            params={"token": account_token}, json=payload, timeout=30)
+    except requests.RequestException as e:
+        logger.error(f"Could not reach Viclix to register the provider: {e}")
+        return None
+    if res.status_code != 200:
+        logger.error(f"Provider register failed: {_err_detail(res)}")
+        return None
+    return res.json()
+
+
+def api_deactivate_local_provider(base_url, account_token, provider="local"):
+    """Deactivate the user's BYOK provider (teardown). Best-effort — logs on
+    failure but never raises, so Ctrl+C cleanup always completes."""
+    try:
+        res = requests.post(f"{base_url}agent/provider/deactivate",
+                            params={"token": account_token},
+                            json={"provider": provider}, timeout=15)
+    except requests.RequestException as e:
+        logger.warning(f"Could not deactivate the provider (tunnel already down?): {e}")
+        return None
+    if res.status_code != 200:
+        logger.warning(f"Provider deactivate failed: {_err_detail(res)}")
+        return None
+    return res.json()
+

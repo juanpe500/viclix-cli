@@ -21,6 +21,7 @@ viclix/commands/deploy.py
 viclix/commands/download.py
 viclix/commands/inspect.py
 viclix/commands/listen.py
+viclix/commands/local_model.py
 viclix/commands/project.py
 viclix/commands/run.py
 viclix/commands/say.py

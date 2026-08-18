@@ -93,6 +93,20 @@ def cmd_agent_run_status(args, cfg):
             logger.error('Provide a goal, e.g. viclix agent-run "add a /health endpoint"')
             sys.exit(1)
         body = {'goal': target, 'mode': (getattr(args, 'mode', None) or 'plan')}
+        # Optional brain (+ snapshot) so this coding run "wears" a brain, mirroring
+        # the workspace 🧠 picker. Passed through as-is (name or id): there is no
+        # token-authed brains-list endpoint to resolve a name → id from the CLI, and
+        # the server owns the run's session (worn_brain_id), so it resolves/validates.
+        # WIRING NOTE (backend): the token run-create endpoint (api_v1.start_agent_run /
+        # AgentRunRequest + _create_and_launch_coding_run) must accept brain_id /
+        # brain_version_id and set them on the session for these flags to take effect,
+        # plus a token brains-list endpoint is needed to resolve a brain NAME here.
+        brain = (getattr(args, 'brain', None) or '').strip()
+        brain_version = (getattr(args, 'brain_version', None) or '').strip()
+        if brain:
+            body['brain_id'] = brain
+        if brain_version:
+            body['brain_version_id'] = brain_version
         url = _tok_url(base_url, 'projects/agent/runs', api_key, project_id)
         res = requests.post(url, json=body)
     else:  # agent-status <run_id>
