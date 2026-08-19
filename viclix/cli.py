@@ -33,6 +33,7 @@ from .commands.agents import (cmd_agent_run_status, cmd_agents, cmd_fleet,
 from .commands.say import run_say_argv
 from .commands.listen import cmd_listen
 from .commands.local_model import cmd_local_model
+from .commands.mcp import cmd_mcp
 
 
 
@@ -54,7 +55,7 @@ COMMANDS = [
     'db-snapshot', 'db-snapshots', 'db-restore', 'db-exec',
     'agent-run', 'agent-status', 'agents', 'fleet',
     'approvals', 'approve', 'reject', 'fan-out',
-    'say', 'listen', 'local-model',
+    'say', 'listen', 'local-model', 'mcp',
 ]
 
 EPILOG = """\
@@ -90,6 +91,8 @@ commands:
   say "text..."              speak text aloud (Edge TTS, streamed; default output device)
   listen                     dictate a reply by voice → confirm → clipboard (Whisper; needs viclix[voice])
   local-model                bridge a LOCAL model (Ollama/LM Studio/llama.cpp) to the agents via a tunnel
+  mcp                        connect external MCP servers so the agents can use their tools
+                             (expose a LOCAL /mcp via tunnel, or add a public one; list/test/remove)
   skill                      print the CLI usage guide (for an AI driving the CLI)
 
 examples:
@@ -110,6 +113,9 @@ examples:
   viclix deploy --full
   viclix deploy --no-wait
   viclix hotfix -i
+  viclix mcp expose chrome-browser --port 3777 --path /mcp
+  viclix mcp add github https://mcp.example.com/sse --header "Authorization: Bearer xyz"
+  viclix mcp list
   viclix say "Done — deployed dashboard and cp, all green."
   viclix say --lang en "Build finished."
   viclix say --listen "Done. What next?"      (speak, then hear your reply)
@@ -133,6 +139,7 @@ def build_parser():
     # Optional sub-target + arg, used by 'download' (e.g. download file PATH).
     parser.add_argument('target', nargs='?', metavar='target', help=argparse.SUPPRESS)
     parser.add_argument('target_arg', nargs='?', metavar='arg', help=argparse.SUPPRESS)
+    parser.add_argument('target_arg2', nargs='?', metavar='arg2', help=argparse.SUPPRESS)
     parser.add_argument('--api-key', help='project API key (per-project override)')
     parser.add_argument('--project-key', help='link/use a shared project key (viclix link / init)')
 
@@ -261,6 +268,16 @@ def build_parser():
     g_lm.add_argument('--label', help='label for the stored credential (default: Local)')
     # NOTE: --model (reused from the speech group) sets the default model id;
     # --serve-port/--proxy-port avoid clashing with --port (local run).
+
+    g_mcp = parser.add_argument_group('mcp')
+    g_mcp.add_argument('--path', help="mcp expose: path the local MCP server serves (default: /mcp)")
+    g_mcp.add_argument('--header', help='mcp add: auth header "Name: value" (e.g. "Authorization: Bearer xyz")')
+    g_mcp.add_argument('--project', action='store_true',
+                       help='mcp: scope the server to THIS repo only (default: all your projects)')
+    g_mcp.add_argument('--all-projects', action='store_true',
+                       help='mcp: make the server available to all your projects (default)')
+    # NOTE: mcp expose reuses --port (local server port), --provider and
+    # --proxy-port (from local-model) for the tunnel.
 
     return parser
 
@@ -430,6 +447,9 @@ def main():
         return
     if args.command == 'local-model':
         cmd_local_model(args, cfg)
+        return
+    if args.command == 'mcp':
+        cmd_mcp(args, cfg)
         return
 
     # Everything else is a simple GET/POST against the endpoint table.

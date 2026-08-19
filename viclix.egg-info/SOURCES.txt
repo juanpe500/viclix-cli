@@ -14,6 +14,7 @@ viclix.egg-info/entry_points.txt
 viclix.egg-info/requires.txt
 viclix.egg-info/top_level.txt
 viclix/commands/__init__.py
+viclix/commands/_tunnel.py
 viclix/commands/agents.py
 viclix/commands/auth.py
 viclix/commands/chat.py
@@ -22,6 +23,7 @@ viclix/commands/download.py
 viclix/commands/inspect.py
 viclix/commands/listen.py
 viclix/commands/local_model.py
+viclix/commands/mcp.py
 viclix/commands/project.py
 viclix/commands/run.py
 viclix/commands/say.py

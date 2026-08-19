@@ -382,3 +382,77 @@ def api_deactivate_local_provider(base_url, account_token, provider="local"):
         return None
     return res.json()
 
+
+# ── External MCP servers (viclix mcp) ───────────────────────────────────────
+def api_mcp_register(base_url, account_token, payload):
+    """Upsert an external MCP server (by name) so the agents can use its tools.
+
+    Account-level call. ``payload`` = {name, url, auth_header?, auth_value?,
+    project_id?, enabled?}. Returns the server view on success or None (logged)."""
+    try:
+        res = requests.post(f"{base_url}agent/mcp",
+                            params={"token": account_token}, json=payload, timeout=30)
+    except requests.RequestException as e:
+        logger.error(f"Could not reach Viclix to register the MCP server: {e}")
+        return None
+    if res.status_code != 200:
+        logger.error(f"MCP register failed: {_err_detail(res)}")
+        return None
+    return res.json()
+
+
+def api_mcp_list(base_url, account_token):
+    """List the user's external MCP servers. Returns the servers list or None."""
+    try:
+        res = requests.get(f"{base_url}agent/mcp",
+                           params={"token": account_token}, timeout=20)
+    except requests.RequestException as e:
+        logger.error(f"Could not reach Viclix to list MCP servers: {e}")
+        return None
+    if res.status_code != 200:
+        logger.error(f"MCP list failed: {_err_detail(res)}")
+        return None
+    return (res.json() or {}).get("servers", [])
+
+
+def api_mcp_test(base_url, account_token, name=None, url=None,
+                 auth_header=None, auth_value=None):
+    """Connect to a server and list its tools. Pass ``name`` to test a saved
+    server, or ``url`` (+ optional auth) to test before saving. Returns
+    {ok, tool_count, tools, error} or None on a transport failure (logged)."""
+    body = {}
+    if name:
+        body["name"] = name
+    if url:
+        body["url"] = url
+    if auth_header:
+        body["auth_header"] = auth_header
+    if auth_value:
+        body["auth_value"] = auth_value
+    try:
+        res = requests.post(f"{base_url}agent/mcp/test",
+                            params={"token": account_token}, json=body, timeout=40)
+    except requests.RequestException as e:
+        logger.error(f"Could not reach Viclix to test the MCP server: {e}")
+        return None
+    if res.status_code != 200:
+        logger.error(f"MCP test failed: {_err_detail(res)}")
+        return None
+    return res.json()
+
+
+def api_mcp_deactivate(base_url, account_token, name):
+    """Disable an MCP server by name (teardown). Best-effort — logs on failure but
+    never raises, so Ctrl+C cleanup always completes."""
+    try:
+        res = requests.post(f"{base_url}agent/mcp/deactivate",
+                            params={"token": account_token},
+                            json={"name": name}, timeout=15)
+    except requests.RequestException as e:
+        logger.warning(f"Could not deactivate the MCP server (tunnel already down?): {e}")
+        return None
+    if res.status_code != 200:
+        logger.warning(f"MCP deactivate failed: {_err_detail(res)}")
+        return None
+    return res.json()
+
