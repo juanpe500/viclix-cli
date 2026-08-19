@@ -384,21 +384,41 @@ def api_deactivate_local_provider(base_url, account_token, provider="local"):
 
 
 # ── External MCP servers (viclix mcp) ───────────────────────────────────────
-def api_mcp_register(base_url, account_token, payload):
+def api_mcp_register(base_url, account_token, payload, retries=0, retry_delay=3):
     """Upsert an external MCP server (by name) so the agents can use its tools.
 
     Account-level call. ``payload`` = {name, url, auth_header?, auth_value?,
-    project_id?, enabled?}. Returns the server view on success or None (logged)."""
-    try:
-        res = requests.post(f"{base_url}agent/mcp",
-                            params={"token": account_token}, json=payload, timeout=30)
-    except requests.RequestException as e:
-        logger.error(f"Could not reach Viclix to register the MCP server: {e}")
+    project_id?, enabled?}. Returns the server view on success or None (logged).
+
+    A freshly-created tunnel hostname (trycloudflare/ngrok) takes a few seconds to
+    become resolvable in public DNS; the server-side SSRF guard resolves the host
+    and rejects with a 'private/local' 400 until it does. ``retries`` re-attempts
+    on exactly that transient rejection so `mcp expose` doesn't fail the race."""
+    import time as _t
+    last = None
+    for i in range(retries + 1):
+        try:
+            res = requests.post(f"{base_url}agent/mcp",
+                                params={"token": account_token}, json=payload, timeout=30)
+        except requests.RequestException as e:
+            last = f"could not reach Viclix: {e}"
+            if i < retries:
+                _t.sleep(retry_delay)
+                continue
+            logger.error(f"Could not reach Viclix to register the MCP server: {e}")
+            return None
+        if res.status_code == 200:
+            return res.json()
+        detail = _err_detail(res)
+        # DNS for a just-opened tunnel lags a few seconds — retry the safety re-check.
+        if res.status_code == 400 and "private/local" in str(detail) and i < retries:
+            last = detail
+            _t.sleep(retry_delay)
+            continue
+        logger.error(f"MCP register failed: {detail}")
         return None
-    if res.status_code != 200:
-        logger.error(f"MCP register failed: {_err_detail(res)}")
-        return None
-    return res.json()
+    logger.error(f"MCP register failed: {last}")
+    return None
 
 
 def api_mcp_list(base_url, account_token):

@@ -91,6 +91,9 @@ def _cmd_expose(args, base_url, account_token):
         full_url = public.rstrip("/") + path
         print(f"\n{C_GREEN}✓ tunnel up:{C_RESET} {public}")
 
+        # A fresh tunnel hostname needs a few seconds to resolve in public DNS
+        # before the Viclix cloud (which resolves + SSRF-checks it) will accept it.
+        print(f"{C_CYAN}Registering (waiting for tunnel DNS to propagate)…{C_RESET}")
         res = api_mcp_register(base_url, account_token, {
             "name": name,
             "url": full_url,
@@ -98,7 +101,7 @@ def _cmd_expose(args, base_url, account_token):
             "auth_value": f"Bearer {token}",
             "project_id": project_id,
             "enabled": True,
-        })
+        }, retries=12, retry_delay=3)
         if not res:
             logger.error("Could not register the MCP server — tearing down.")
             return
