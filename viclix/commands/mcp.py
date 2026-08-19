@@ -91,9 +91,6 @@ def _cmd_expose(args, base_url, account_token):
         full_url = public.rstrip("/") + path
         print(f"\n{C_GREEN}✓ tunnel up:{C_RESET} {public}")
 
-        # A fresh tunnel hostname needs a few seconds to resolve in public DNS
-        # before the Viclix cloud (which resolves + SSRF-checks it) will accept it.
-        print(f"{C_CYAN}Registering (waiting for tunnel DNS to propagate)…{C_RESET}")
         res = api_mcp_register(base_url, account_token, {
             "name": name,
             "url": full_url,
@@ -101,7 +98,7 @@ def _cmd_expose(args, base_url, account_token):
             "auth_value": f"Bearer {token}",
             "project_id": project_id,
             "enabled": True,
-        }, retries=12, retry_delay=3)
+        })
         if not res:
             logger.error("Could not register the MCP server — tearing down.")
             return
@@ -109,13 +106,23 @@ def _cmd_expose(args, base_url, account_token):
         print(f"{C_GREEN}✓ registered{C_RESET} MCP server {C_CYAN}{name}{C_RESET} "
               f"→ {full_url}  ·  scope {_scope_label(project_id)}")
 
-        # Auto-test so the user sees the discovered tools immediately.
-        print(f"{C_CYAN}Testing…{C_RESET}")
-        ok = _print_test(api_mcp_test(base_url, account_token, name=name))
+        # Auto-test so the user sees the discovered tools. The Viclix box may take
+        # a little while to resolve a just-opened tunnel hostname (its resolver
+        # negative-caches the first miss), so retry a few times before giving up.
+        print(f"{C_CYAN}Testing (the tunnel DNS can take a moment to reach Viclix)…{C_RESET}")
+        ok = False
+        for attempt in range(6):
+            if attempt:
+                time.sleep(5)
+            if _print_test(api_mcp_test(base_url, account_token, name=name)):
+                ok = True
+                break
         if not ok:
-            print(f"{C_YELLOW}⚠ No tools discovered. Is the local server serving "
-                  f"{path} on port {port}? Leaving it up — fix the server and it'll "
-                  f"work on the next agent run, or Ctrl+C to stop.{C_RESET}")
+            print(f"{C_YELLOW}⚠ No tools yet. Either the local server isn't serving "
+                  f"{path} on port {port}, or the tunnel DNS hasn't propagated to Viclix "
+                  f"yet (usually under a minute). Leaving it up — the agent will pick the "
+                  f"tools up on its next run. `viclix mcp test {name}` re-checks; Ctrl+C to stop."
+                  f"{C_RESET}")
 
         print(f"\n{C_YELLOW}⚠ This exposes your local MCP server to the internet while "
               f"the tunnel is up.{C_RESET}\n  Only requests carrying the secret token are "
