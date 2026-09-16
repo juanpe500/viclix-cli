@@ -94,8 +94,10 @@ def _load_fleet():
 class _State:
     """Latest poll result per app, guarded by a lock."""
 
-    def __init__(self, apps):
+    def __init__(self, apps, refresh):
         self.lock = threading.Lock()
+        self.refresh = max(3, int(refresh))
+        self.next_at = time.time()          # epoch of the next scheduled poll
         self.apps = {}
         for a in apps:
             self.apps[a["name"]] = {
@@ -119,7 +121,9 @@ class _State:
                 out.append(row)
                 up += 1 if row["ok"] else 0
                 down += 0 if row["ok"] else 1
-            return {"ts": now, "up": up, "down": down, "apps": out}
+            return {"ts": now, "up": up, "down": down,
+                    "refresh": self.refresh, "next_at": self.next_at,
+                    "apps": out}
 
 
 def _poll_once(app, state, timeout=10):
@@ -168,21 +172,68 @@ def _first_number(metrics):
     return None
 
 
-def _poller(fleet, state, stop):
-    refresh = max(3, int(fleet.get("refresh", DEFAULT_REFRESH)))
-    apps = fleet["apps"]
-    while not stop.is_set():
+MIN_REFRESH = 3
+MAX_REFRESH = 3600
+
+
+class _Poller(threading.Thread):
+    """Polls every app on a dynamic interval; can be re-timed live."""
+
+    def __init__(self, fleet, state):
+        super().__init__(daemon=True)
+        self.apps = fleet["apps"]
+        self.state = state
+        self._interval = state.refresh
+        self._stop = threading.Event()
+        self._wake = threading.Event()      # set → poll now & reschedule
+
+    def set_interval(self, secs):
+        """Change the pull cadence live, persist it, and poll immediately."""
+        secs = max(MIN_REFRESH, min(MAX_REFRESH, int(secs)))
+        self._interval = secs
+        with self.state.lock:
+            self.state.refresh = secs
+        _save_refresh(secs)
+        self._wake.set()
+        return secs
+
+    def stop(self):
+        self._stop.set()
+        self._wake.set()
+
+    def _poll_all(self):
         threads = []
-        for a in apps:
-            t = threading.Thread(target=_poll_once, args=(a, state), daemon=True)
+        for a in self.apps:
+            t = threading.Thread(target=_poll_once, args=(a, self.state), daemon=True)
             t.start(); threads.append(t)
         for t in threads:
             t.join(timeout=12)
-        stop.wait(refresh)
+
+    def run(self):
+        while not self._stop.is_set():
+            self._poll_all()
+            iv = self._interval
+            with self.state.lock:
+                self.state.next_at = time.time() + iv
+            self._wake.wait(iv)             # sleeps iv, or returns early if re-timed
+            self._wake.clear()
 
 
-def _make_handler(state, refresh):
-    page = _PAGE.replace("__REFRESH__", str(int(refresh) * 1000))
+def _save_refresh(secs):
+    """Persist the new interval into the fleet file (best-effort)."""
+    try:
+        with open(FLEET_PATH, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        data["refresh"] = int(secs)
+        with open(FLEET_PATH, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=2)
+    except Exception:
+        pass
+
+
+def _make_handler(state, poller):
+    page = (_PAGE.replace("__MIN__", str(MIN_REFRESH))
+                 .replace("__MAX__", str(MAX_REFRESH)))
 
     class H(BaseHTTPRequestHandler):
         def log_message(self, *a):
@@ -197,9 +248,18 @@ def _make_handler(state, refresh):
             self.wfile.write(data)
 
         def do_GET(self):
-            if self.path.startswith("/state"):
+            from urllib.parse import urlparse, parse_qs
+            parsed = urlparse(self.path)
+            if parsed.path == "/set-interval":
+                q = parse_qs(parsed.query)
+                try:
+                    secs = poller.set_interval(int(q.get("secs", ["0"])[0]))
+                    self._send(json.dumps({"ok": True, "refresh": secs}), "application/json")
+                except Exception as e:
+                    self._send(json.dumps({"ok": False, "error": str(e)}), "application/json")
+            elif parsed.path == "/state":
                 self._send(json.dumps(state.snapshot()), "application/json")
-            elif self.path in ("/", "/index.html"):
+            elif parsed.path in ("/", "/index.html"):
                 self._send(page, "text/html; charset=utf-8")
             else:
                 self.send_response(404); self.end_headers()
@@ -211,16 +271,15 @@ def cmd_stats(args):
     fleet = _load_fleet()
     if fleet is None:
         return
-    refresh = max(3, int(fleet.get("refresh", DEFAULT_REFRESH)))
-    state = _State(fleet["apps"])
+    refresh = max(MIN_REFRESH, int(fleet.get("refresh", DEFAULT_REFRESH)))
+    state = _State(fleet["apps"], refresh)
 
-    stop = threading.Event()
-    poller = threading.Thread(target=_poller, args=(fleet, state, stop), daemon=True)
+    poller = _Poller(fleet, state)
     poller.start()
 
     host = getattr(args, "host", None) or "127.0.0.1"
     port = getattr(args, "port", None) or _free_port(8900, host)
-    httpd = ThreadingHTTPServer((host, port), _make_handler(state, refresh))
+    httpd = ThreadingHTTPServer((host, port), _make_handler(state, poller))
     url = f"http://{'localhost' if host in ('127.0.0.1', '0.0.0.0') else host}:{port}"
 
     print(f"{C_GREEN}✓ fleet wall{C_RESET} → {C_CYAN}{url}{C_RESET}  "
@@ -237,7 +296,7 @@ def cmd_stats(args):
     except KeyboardInterrupt:
         print(f"\n{C_YELLOW}stopping…{C_RESET}")
     finally:
-        stop.set()
+        poller.stop()
         httpd.shutdown()
 
 
@@ -260,6 +319,13 @@ header{display:flex;align-items:center;justify-content:space-between;
 .brand{display:flex;align-items:baseline;gap:10px}
 .brand h1{font-size:19px;letter-spacing:3px;font-weight:700}
 .brand span{color:var(--dim);font:12px/1 var(--mono);letter-spacing:2px}
+.ctrls{display:flex;align-items:center;gap:14px}
+.cd{font:12px/1 var(--mono);letter-spacing:1px;color:var(--dim);min-width:64px;text-align:right}
+.cd b{color:var(--ink)}
+.iv{font:12px/1 var(--mono);letter-spacing:1px;color:var(--dim);display:flex;align-items:center;gap:6px}
+.iv input{width:56px;background:#0b0e15;border:1px solid var(--line);border-radius:8px;color:var(--ink);
+  font:13px/1 var(--mono);text-align:center;padding:6px 4px;outline:none}
+.iv input:focus{border-color:var(--accent)}
 .summary{display:flex;gap:8px}
 .pill{font:12px/1 var(--mono);letter-spacing:1px;padding:6px 10px;border-radius:999px;border:1px solid var(--line)}
 .pill.ok{color:var(--up);border-color:#1c3a2a;background:#0c1a12}
@@ -296,12 +362,17 @@ footer{display:flex;justify-content:space-between;font:11px/1 var(--mono);color:
 <body>
 <header>
   <div class="brand"><h1>FLEET</h1><span id="sub">live</span></div>
-  <div class="summary" id="sum"></div>
+  <div class="ctrls">
+    <span class="cd" id="cd">next —</span>
+    <label class="iv">every <input id="iv" type="number" min="__MIN__" max="__MAX__" step="1"> s</label>
+    <span class="summary" id="sum"></span>
+  </div>
 </header>
 <div class="list" id="list"><div class="off">connecting…</div></div>
 <footer><span>viclix stats</span><span id="clk"></span></footer>
 <script>
-const REFRESH=__REFRESH__;
+const MINR=__MIN__, MAXR=__MAX__;
+let sig=null, nextAt=0, refresh=15;
 function fmtVal(v,f){if(v==null)return"—";
   if(f==="money")return"$"+Number(v).toLocaleString();
   if(f==="float")return Number(v).toLocaleString(undefined,{maximumFractionDigits:2});
@@ -321,16 +392,11 @@ function metricCells(ms){
     <span class="v">${fmtVal(m.value,m.fmt)}</span></div>`).join("");
 }
 function age(s){if(s==null)return "—";if(s<60)return s+"s";if(s<3600)return Math.floor(s/60)+"m";return Math.floor(s/3600)+"h";}
-async function tick(){
-  let d;try{d=await(await fetch("/state")).json();}catch(e){return;}
-  document.getElementById("sub").textContent=`live · pull ${Math.round(REFRESH/1000)}s`;
-  document.getElementById("sum").innerHTML=
-    `<span class="pill ok">${d.up} UP</span>`+(d.down?`<span class="pill bad">${d.down} DOWN</span>`:``);
-  const rows=d.apps.map(a=>{
+function renderList(apps){
+  const rows=apps.map(a=>{
     const pending=a.ok===null||a.updated===0;
-    const cls=pending?"un":a.ok?"":"dn";
-    const stale=a.age_s!=null&&a.age_s>REFRESH/1000*3;
-    const led=pending?"un":(!a.ok?"dn":(stale||(a.latency_ms>400)?"wn":""));
+    const stale=a.age_s!=null&&a.age_s>refresh*3;
+    const led=pending?"un":(!a.ok?"dn":((stale||a.latency_ms>1500)?"wn":""));
     const right = a.ok
       ? `<span class="lat">lat <b>${a.latency_ms??'—'}ms</b></span>${spark(a.history,false)}<span class="age">↻ ${age(a.age_s)}</span>`
       : `<span style="color:var(--down);font:12px/1 var(--mono)">${pending?'…':(a.error||'down')}</span>${spark(a.history,true)}<span class="age">↻ ${age(a.age_s)}</span>`;
@@ -344,8 +410,36 @@ async function tick(){
   }).join("");
   document.getElementById("list").innerHTML=rows||`<div class="off">no apps</div>`;
 }
-const clk=()=>document.getElementById("clk").textContent=new Date().toLocaleTimeString();
-clk();setInterval(clk,1000);
-tick();setInterval(tick,Math.max(2000,REFRESH));
+// ── refresh-interval input (changes the real server-side pull cadence) ──
+const ivInput=document.getElementById("iv");
+let ivDirty=false;
+ivInput.addEventListener("input",()=>{ivDirty=true;});
+async function applyInterval(){
+  let v=parseInt(ivInput.value,10);
+  if(isNaN(v)){ivInput.value=refresh;ivDirty=false;return;}
+  v=Math.max(MINR,Math.min(MAXR,v));
+  try{const r=await(await fetch("/set-interval?secs="+v)).json();
+      if(r&&r.ok){refresh=r.refresh;ivInput.value=r.refresh;}}catch(e){}
+  ivDirty=false;
+}
+ivInput.addEventListener("change",applyInterval);
+ivInput.addEventListener("keydown",e=>{if(e.key==="Enter"){applyInterval();ivInput.blur();}});
+function signature(apps){return JSON.stringify(apps.map(a=>[a.name,a.ok,a.updated,a.latency_ms,(a.metrics||[]).map(m=>m.value),a.error,a.age_s]));}
+async function poll(){
+  let d;try{d=await(await fetch("/state")).json();}catch(e){return;}
+  refresh=d.refresh; nextAt=(d.next_at||0)*1000;
+  if(!ivDirty && document.activeElement!==ivInput) ivInput.value=refresh;
+  document.getElementById("sub").textContent=`live · every ${refresh}s`;
+  document.getElementById("sum").innerHTML=
+    `<span class="pill ok">${d.up} UP</span>`+(d.down?`<span class="pill bad">${d.down} DOWN</span>`:``);
+  const s=signature(d.apps);
+  if(s!==sig){sig=s;renderList(d.apps);}
+}
+function beat(){
+  const secs=nextAt?Math.max(0,Math.ceil((nextAt-Date.now())/1000)):0;
+  document.getElementById("cd").innerHTML=nextAt?`next <b>${secs}s</b>`:"next —";
+  document.getElementById("clk").textContent=new Date().toLocaleTimeString();
+}
+poll(); setInterval(poll,1000); beat(); setInterval(beat,250);
 </script>
 </body></html>"""

@@ -1,4 +1,4 @@
-__version__ = "0.1.85"
+__version__ = "0.1.86"
 
 from .cli import main
 
