@@ -34,6 +34,7 @@ from .commands.say import run_say_argv
 from .commands.listen import cmd_listen
 from .commands.local_model import cmd_local_model
 from .commands.mcp import cmd_mcp
+from .commands.stats import cmd_stats
 
 
 
@@ -55,7 +56,7 @@ COMMANDS = [
     'db-snapshot', 'db-snapshots', 'db-restore', 'db-exec',
     'agent-run', 'agent-status', 'agents', 'fleet',
     'approvals', 'approve', 'reject', 'fan-out',
-    'say', 'listen', 'local-model', 'mcp',
+    'say', 'listen', 'local-model', 'mcp', 'stats',
 ]
 
 EPILOG = """\
@@ -93,6 +94,8 @@ commands:
   local-model                bridge a LOCAL model (Ollama/LM Studio/llama.cpp) to the agents via a tunnel
   mcp                        connect external MCP servers so the agents can use their tools
                              (expose a LOCAL /mcp via tunnel, or add a public one; list/test/remove)
+  stats                      live fleet wall: pull every app's /_stats and show them on one
+                             screen (reads ~/.viclix/stats.json; --port / --no-browser)
   skill                      print the CLI usage guide (for an AI driving the CLI)
 
 examples:
@@ -344,6 +347,11 @@ def main():
     # Local dev — no account token needed.
     if args.command in ('run', 'local'):
         cmd_run(args)
+        return
+
+    # Fleet wall — runs off the local ~/.viclix/stats.json, no account token.
+    if args.command == 'stats':
+        cmd_stats(args)
         return
 
     # Voice dictation — fully local, no account or config needed.

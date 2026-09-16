@@ -28,3 +28,4 @@ viclix/commands/project.py
 viclix/commands/run.py
 viclix/commands/say.py
 viclix/commands/skill.py
+viclix/commands/stats.py
