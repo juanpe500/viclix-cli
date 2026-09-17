@@ -1,0 +1,120 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Mockup 5 — Ship bridge console</title>
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Saira:wght@500;600;700;800&family=Saira+Condensed:wght@600;700&family=Share+Tech+Mono&display=swap" rel="stylesheet">
+<style>
+:root{--bg:#05060a;--panel:#0c0f16;--edge:#1b2230;--ink:#f2f5fa;--dim:#5d6b82;
+  --amber:#ffb300;--cyan:#33d1ff;--red:#ff3b4e;--green:#39e58c;
+  --sai:'Saira',sans-serif;--sc:'Saira Condensed',sans-serif;--stm:'Share Tech Mono',monospace}
+*{box-sizing:border-box;margin:0}
+body{background:var(--bg);color:var(--ink);font-family:var(--sai);
+  min-height:100vh;display:flex;justify-content:center}
+body::before{content:"";position:fixed;inset:0;pointer-events:none;
+  background:radial-gradient(120% 70% at 50% -10%,rgba(40,60,100,.14),transparent 60%)}
+.wall{position:relative;width:min(700px,100%);min-height:100vh;
+  display:flex;flex-direction:column;gap:10px;padding:14px 14px 10px}
+/* header */
+header{display:flex;align-items:stretch;gap:10px}
+.hmain{flex:1;background:var(--panel);border:1px solid var(--edge);border-radius:4px;
+  padding:12px 16px;clip-path:polygon(0 0,calc(100% - 16px) 0,100% 16px,100% 100%,0 100%)}
+.hmain h1{font-family:var(--sc);font-size:24px;font-weight:700;letter-spacing:4px;line-height:1}
+.hmain small{display:block;margin-top:3px;font:11px var(--stm);letter-spacing:2px;color:var(--dim)}
+.hclock{background:var(--panel);border:1px solid var(--edge);border-radius:4px;
+  padding:10px 16px;display:flex;flex-direction:column;justify-content:center;align-items:flex-end}
+.hclock b{font-family:var(--sc);font-size:26px;font-weight:700;letter-spacing:2px}
+.hclock span{font:10px var(--stm);letter-spacing:2px;color:var(--dim)}
+.hclock span i{font-style:normal;color:var(--amber)}
+/* status lamp strip */
+.lamps{display:flex;gap:8px}
+.lamp{flex:1;border-radius:3px;padding:7px 4px 6px;text-align:center;
+  font-family:var(--sc);font-weight:700;font-size:12px;letter-spacing:2px;
+  border:1px solid var(--edge);background:#0a0d13;color:var(--dim)}
+.lamp.on{background:#0d2318;border-color:#1d4a33;color:var(--green)}
+.lamp.wn{background:#251b06;border-color:#4d3a10;color:var(--amber)}
+.lamp.al{background:var(--red);border-color:var(--red);color:#fff;animation:bk .8s steps(2) infinite}
+@keyframes bk{50%{opacity:.35}}
+/* system tiles */
+.sys{flex:1;display:flex;flex-direction:column;gap:10px}
+.tile{--c:var(--green);background:var(--panel);border:1px solid var(--edge);border-radius:4px;
+  overflow:hidden;clip-path:polygon(0 0,100% 0,100% calc(100% - 14px),calc(100% - 14px) 100%,0 100%)}
+.thead{display:flex;align-items:center;background:var(--c);color:#050607;padding:7px 14px 6px;gap:12px}
+.thead b{font-family:var(--sc);font-size:18px;font-weight:700;letter-spacing:3px}
+.thead .host{font:11px var(--stm);opacity:.75;flex:1}
+.thead .st{font-family:var(--sc);font-weight:700;font-size:13px;letter-spacing:2px}
+.tile.alarm .thead{color:#fff;animation:bk 1s steps(2) infinite}
+.tbody{padding:12px 14px 12px}
+.grid{display:grid;grid-template-columns:repeat(3,1fr);gap:12px 14px}
+.cell b{display:block;font-family:var(--sc);font-size:32px;font-weight:700;line-height:1;
+  font-variant-numeric:tabular-nums}
+.cell i{display:block;margin-top:2px;font-style:normal;font-size:11.5px;font-weight:600;
+  letter-spacing:1px;color:var(--dim);text-transform:uppercase}
+.meter{display:flex;align-items:center;gap:10px;margin-top:12px;padding-top:10px;
+  border-top:1px solid var(--edge)}
+.meter .lbl{font:10px var(--stm);letter-spacing:2px;color:var(--dim);width:86px}
+.segs{flex:1;display:flex;gap:3px;height:10px}
+.segs i{flex:1;background:#141926;border-radius:1px}
+.segs i.f{background:var(--c)}
+.segs i.f.hot{background:var(--amber)}
+.meter .val{font-family:var(--sc);font-weight:700;font-size:15px;width:74px;text-align:right}
+.deadbody{padding:14px;font:13px var(--stm);color:#ff8d99;letter-spacing:1px;line-height:1.8}
+.deadbody b{color:#fff;background:var(--red);padding:1px 7px;border-radius:2px;font-weight:400}
+footer{display:flex;justify-content:space-between;align-items:center;
+  font:10px var(--stm);letter-spacing:2px;color:var(--dim);padding:2px 4px 4px}
+footer input{width:44px;background:#0c0f16;border:1px solid var(--edge);border-radius:3px;
+  color:var(--amber);font:12px var(--stm);text-align:center;padding:3px 2px;outline:none}
+</style></head>
+<body>
+<div class="wall">
+  <header>
+    <div class="hmain"><h1>FLEET OPS</h1><small>VCX-01 BRIDGE CONSOLE · 5 SYSTEMS</small></div>
+    <div class="hclock"><b id="clk">10:10:29</b><span>NEXT SWEEP <i id="cd">12</i>s</span></div>
+  </header>
+  <div class="lamps">
+    <span class="lamp on">JUDGLY</span><span class="lamp on">SAVAGE</span>
+    <span class="lamp al">CHEF</span><span class="lamp wn">VAULT</span><span class="lamp wn">GEO</span>
+  </div>
+  <div class="sys" id="sys"></div>
+  <footer><span>VICLIX STATS · 127.0.0.1:57475</span><span>SWEEP EVERY <input value="30"> S</span></footer>
+</div>
+<script>
+const APPS=[
+ {name:"JUDGLY",host:"app.judgly.com",c:"var(--green)",st:"NOMINAL",lat:1271,
+  m:[["9","Total users"],["34","Active polls"],["203","Total votes"],["$0","Purchased"],["$424","Spent"]]},
+ {name:"SAVAGESCROLL",host:"app.savagescroll.com",c:"var(--green)",st:"NOMINAL",lat:886,
+  m:[["10","Total users"],["12","Pages"],["14","Posted"],["2,188","Scheduled"],["0","Active subs"]]},
+ {name:"CHEF SIZTH",host:"chef.sizth.com",dead:true,st:"OFFLINE"},
+ {name:"VAULT",host:"jp-vault.viclix.com",c:"var(--amber)",st:"SLOW",lat:1670,
+  m:[["1","Users"],["6","Live services"],["3","API calls"],["$99.87","Credits"],["$0","Revenue"]]},
+ {name:"GEO FALL",host:"geofall.net",c:"var(--amber)",st:"SLOW",lat:1955,
+  m:[["8","Players"],["0","Active 5m"],["7","Bases"],["3","Signups today"],["3,193","Total scrap"]]},
+];
+const sys=document.getElementById("sys");
+for(const a of APPS){
+  const el=document.createElement("section");
+  el.className="tile"+(a.dead?" alarm":"");
+  el.style.setProperty("--c",a.dead?"var(--red)":a.c);
+  const head=`<div class="thead"><b>${a.name}</b><span class="host">${a.host}</span>
+    <span class="st">■ ${a.st}</span></div>`;
+  if(a.dead){
+    el.innerHTML=head+`<div class="deadbody">SIGNAL LOST — no response on /_stats/api<br>
+      timed out ×2 · last contact <b>2m ago</b> · auto-relink armed</div>`;
+  }else{
+    const segs=20,fill=Math.min(segs,Math.round(a.lat/2500*segs));
+    const hot=a.lat>1500;
+    el.innerHTML=head+`<div class="tbody">
+      <div class="grid">${a.m.map(([v,k])=>`<div class="cell"><b>${v}</b><i>${k}</i></div>`).join("")}</div>
+      <div class="meter"><span class="lbl">RESPONSE</span>
+        <span class="segs">${Array.from({length:segs},(_,i)=>
+          `<i class="${i<fill?("f"+(hot?" hot":"")):""}"></i>`).join("")}</span>
+        <span class="val">${a.lat} ms</span></div></div>`;
+  }
+  sys.appendChild(el);
+}
+setInterval(()=>{document.getElementById("clk").textContent=
+  new Date().toTimeString().slice(0,8)},500);
+let cd=12;setInterval(()=>{cd=cd<=1?30:cd-1;
+  document.getElementById("cd").textContent=cd},1000);
+</script>
+</body></html>

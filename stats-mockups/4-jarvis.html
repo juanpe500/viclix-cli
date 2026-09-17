@@ -1,0 +1,161 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Mockup 4 — JARVIS hologram HUD</title>
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Rajdhani:wght@500;600;700&family=Share+Tech+Mono&display=swap" rel="stylesheet">
+<style>
+:root{--bg:#020609;--cy:#35e0ff;--cy2:#0e7f9c;--ink:#eafcff;--dim:#4d8fa3;
+  --ok:#35e0ff;--warn:#ffc23a;--bad:#ff4455;
+  --raj:'Rajdhani',sans-serif;--stm:'Share Tech Mono',monospace}
+*{box-sizing:border-box;margin:0}
+body{background:var(--bg);color:var(--ink);font-family:var(--raj);
+  min-height:100vh;display:flex;justify-content:center;overflow-x:hidden}
+body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
+  background:
+   radial-gradient(90% 55% at 50% 0%,rgba(20,120,160,.16),transparent 65%),
+   repeating-linear-gradient(0deg,rgba(53,224,255,.022) 0 1px,transparent 1px 36px),
+   repeating-linear-gradient(90deg,rgba(53,224,255,.022) 0 1px,transparent 1px 36px)}
+body::after{content:"";position:fixed;inset:0;pointer-events:none;z-index:5;
+  background:repeating-linear-gradient(0deg,rgba(0,0,0,.16) 0 1px,transparent 1px 3px);opacity:.35}
+.wall{position:relative;z-index:1;width:min(700px,100%);min-height:100vh;
+  display:flex;flex-direction:column;gap:12px;padding:18px 16px 12px}
+/* ── header ── */
+header{display:flex;align-items:center;gap:16px;padding:4px 2px 10px}
+.reactor{position:relative;width:86px;height:86px;flex:none}
+.reactor svg{position:absolute;inset:0;overflow:visible}
+.spin1{animation:rot 14s linear infinite;transform-origin:50% 50%}
+.spin2{animation:rot 9s linear infinite reverse;transform-origin:50% 50%}
+.spin3{animation:rot 22s linear infinite;transform-origin:50% 50%}
+@keyframes rot{to{transform:rotate(360deg)}}
+.reactor .core{position:absolute;inset:0;display:flex;flex-direction:column;
+  align-items:center;justify-content:center;gap:0}
+.reactor .core b{font-size:26px;font-weight:700;line-height:1;color:#fff;
+  text-shadow:0 0 14px rgba(53,224,255,.8)}
+.reactor .core span{font:10px var(--stm);color:var(--dim);letter-spacing:1px}
+.htxt{flex:1}
+.htxt h1{font-size:26px;font-weight:700;letter-spacing:7px;line-height:1;color:#fff}
+.htxt .sub{margin-top:5px;font:11px var(--stm);letter-spacing:3px;color:var(--cy)}
+.hr{text-align:right}
+.hr .clk{font:600 22px var(--raj);letter-spacing:2px;color:#fff}
+.hr .scan{margin-top:4px;font:10px var(--stm);letter-spacing:2px;color:var(--dim)}
+.hr .scan b{color:var(--cy);font-size:12px}
+.hbar{height:2px;background:linear-gradient(90deg,transparent,var(--cy2) 20%,var(--cy) 50%,var(--cy2) 80%,transparent);
+  box-shadow:0 0 12px rgba(53,224,255,.5);margin:0 2px}
+/* ── modules ── */
+.mods{display:flex;flex-direction:column;gap:12px;flex:1;padding-top:4px}
+.mod{--c:var(--ok);position:relative;padding:14px 16px 13px;
+  background:linear-gradient(180deg,rgba(14,60,78,.22),rgba(6,20,28,.5));
+  clip-path:polygon(18px 0,100% 0,100% calc(100% - 18px),calc(100% - 18px) 100%,0 100%,0 18px);
+  border:1px solid rgba(53,224,255,.22)}
+.mod::before,.mod::after{content:"";position:absolute;width:26px;height:26px;pointer-events:none}
+.mod::before{left:0;top:0;border-left:2px solid var(--c);border-top:2px solid var(--c)}
+.mod::after{right:0;bottom:0;border-right:2px solid var(--c);border-bottom:2px solid var(--c)}
+.mod.warn{--c:var(--warn)}
+.mod.bad{--c:var(--bad);background:linear-gradient(180deg,rgba(90,15,25,.28),rgba(20,4,8,.55));
+  border-color:rgba(255,68,85,.35)}
+.mhead{display:flex;align-items:center;gap:12px}
+.ring{position:relative;width:46px;height:46px;flex:none}
+.ring svg{position:absolute;inset:0;overflow:visible}
+.ring .lt{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;
+  font:700 15px var(--raj);color:var(--c)}
+.mname{flex:1;min-width:0}
+.mname b{display:block;font-size:21px;font-weight:700;letter-spacing:3px;color:#fff;line-height:1.05}
+.mname span{font:10px var(--stm);letter-spacing:1px;color:var(--dim)}
+.stat{text-align:right}
+.stat .lbl{display:inline-block;font:600 12px var(--raj);letter-spacing:3px;color:var(--c);
+  padding:3px 10px;border:1px solid var(--c);border-radius:2px}
+.mod.bad .stat .lbl{background:var(--bad);color:#fff;border-color:var(--bad);
+  animation:bk .9s steps(2) infinite}
+@keyframes bk{50%{opacity:.3}}
+.stat .lat{display:block;margin-top:5px;font:10px var(--stm);color:var(--dim);letter-spacing:1px}
+.stat .lat b{color:var(--ink);font-size:12px}
+.mgrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(104px,1fr));
+  gap:10px 12px;margin-top:13px;padding-top:11px;
+  border-top:1px dashed rgba(53,224,255,.18)}
+.mv{text-align:left}
+.mv b{display:block;font-size:29px;font-weight:700;line-height:1;color:#fff;
+  font-variant-numeric:tabular-nums}
+.mv i{display:block;margin-top:3px;font-style:normal;font:600 11px var(--raj);
+  letter-spacing:1.5px;color:var(--cy);text-transform:uppercase}
+.offline{margin-top:12px;padding-top:11px;border-top:1px dashed rgba(255,68,85,.25);
+  font:13px var(--stm);color:#ff97a0;letter-spacing:1px;line-height:1.7}
+footer{display:flex;justify-content:space-between;align-items:center;padding:8px 2px 2px;
+  font:10px var(--stm);letter-spacing:2px;color:var(--dim)}
+footer input{width:46px;background:rgba(14,60,78,.35);border:1px solid rgba(53,224,255,.3);
+  color:var(--cy);font:12px var(--stm);text-align:center;padding:3px 2px;outline:none;border-radius:2px}
+</style></head>
+<body>
+<div class="wall">
+  <header>
+    <div class="reactor">
+      <svg viewBox="0 0 86 86">
+        <circle cx="43" cy="43" r="41" fill="none" stroke="#0e3c4e" stroke-width="1"/>
+        <g class="spin1"><circle cx="43" cy="43" r="38" fill="none" stroke="#35e0ff" stroke-width="2"
+          stroke-dasharray="40 22 8 22" stroke-linecap="round" opacity=".9"/></g>
+        <g class="spin2"><circle cx="43" cy="43" r="30" fill="none" stroke="#1899b8" stroke-width="4"
+          stroke-dasharray="3 7"/></g>
+        <g class="spin3"><circle cx="43" cy="43" r="23" fill="none" stroke="#35e0ff" stroke-width="1.4"
+          stroke-dasharray="26 14 4 14" opacity=".8"/></g>
+        <circle cx="43" cy="43" r="17" fill="rgba(53,224,255,.09)" stroke="#35e0ff" stroke-width="1"/>
+      </svg>
+      <div class="core"><b>4<span style="font-size:15px;color:#4d8fa3">/5</span></b><span>ONLINE</span></div>
+    </div>
+    <div class="htxt">
+      <h1>FLEET&nbsp;OS</h1>
+      <div class="sub">VICLIX · 5 SYSTEMS LINKED</div>
+    </div>
+    <div class="hr">
+      <div class="clk" id="clk">10:10:29</div>
+      <div class="scan">NEXT SCAN <b id="cd">12</b>s · EVERY 30s</div>
+    </div>
+  </header>
+  <div class="hbar"></div>
+  <div class="mods" id="mods"></div>
+  <footer><span>VICLIX STATS · 127.0.0.1:57475</span>
+    <span>SCAN EVERY <input value="30"> S</span></footer>
+</div>
+<script>
+const APPS=[
+ {name:"JUDGLY",host:"app.judgly.com",st:"ok",tag:"NOMINAL",lat:1271,
+  m:[["9","Total users"],["34","Active polls"],["203","Total votes"],["$0","Purchased"],["$424","Spent"]]},
+ {name:"SAVAGESCROLL",host:"app.savagescroll.com",st:"ok",tag:"NOMINAL",lat:886,
+  m:[["10","Total users"],["12","Pages"],["14","Posted"],["2,188","Scheduled"],["0","Active subs"]]},
+ {name:"CHEF SIZTH",host:"chef.sizth.com",st:"bad",tag:"OFFLINE",lat:null,m:null},
+ {name:"VAULT",host:"jp-vault.viclix.com",st:"warn",tag:"SLOW",lat:1670,
+  m:[["1","Users"],["6","Live services"],["3","API calls"],["$99.87","Credits"],["$0","Revenue"]]},
+ {name:"GEO FALL",host:"geofall.net",st:"warn",tag:"SLOW",lat:1955,
+  m:[["8","Players"],["0","Active 5m"],["7","Bases"],["3","Signups today"],["3,193","Total scrap"]]},
+];
+const COLORS={ok:"#35e0ff",warn:"#ffc23a",bad:"#ff4455"};
+function ringSVG(c,dead){
+  return `<svg viewBox="0 0 46 46">
+    <circle cx="23" cy="23" r="21" fill="none" stroke="rgba(53,224,255,.15)" stroke-width="1"/>
+    <g class="${dead?'':'spin2'}"><circle cx="23" cy="23" r="18" fill="none" stroke="${c}"
+      stroke-width="2" stroke-dasharray="${dead?'4 6':'22 10 5 10'}" stroke-linecap="round"/></g>
+    <g class="${dead?'':'spin1'}"><circle cx="23" cy="23" r="13" fill="none" stroke="${c}"
+      stroke-width="1" stroke-dasharray="8 6" opacity=".6"/></g></svg>`;
+}
+const mods=document.getElementById("mods");
+for(const a of APPS){
+  const c=COLORS[a.st];
+  const el=document.createElement("section");
+  el.className="mod "+(a.st==="ok"?"":a.st);
+  const init=a.name.split(" ").map(w=>w[0]).join("").slice(0,2);
+  el.innerHTML=`<div class="mhead">
+      <div class="ring">${ringSVG(c,a.st==="bad")}<span class="lt">${init}</span></div>
+      <div class="mname"><b>${a.name}</b><span>${a.host}</span></div>
+      <div class="stat"><span class="lbl">${a.tag}</span>
+        <span class="lat">${a.lat?`PING <b>${a.lat}ms</b>`:"LINK SEVERED"}</span></div>
+    </div>`+
+    (a.m?`<div class="mgrid">${a.m.map(([v,k])=>
+        `<div class="mv"><b>${v}</b><i>${k}</i></div>`).join("")}</div>`
+      :`<div class="offline">&gt; connection timed out ×2<br>&gt; last telemetry received 2m ago — attempting relink…</div>`);
+  mods.appendChild(el);
+}
+setInterval(()=>{document.getElementById("clk").textContent=
+  new Date().toTimeString().slice(0,8)},500);
+let cd=12;setInterval(()=>{cd=cd<=1?30:cd-1;
+  document.getElementById("cd").textContent=cd},1000);
+</script>
+</body></html>

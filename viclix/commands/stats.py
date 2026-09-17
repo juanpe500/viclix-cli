@@ -7,7 +7,7 @@ and a sparkline. Built for a vertical monitor left on 24/7.
 
     viclix stats                 # start the wall + open the browser
     viclix stats --no-browser    # just serve it (e.g. on a headless box)
-    viclix stats --port 8900     # pin the port
+    viclix stats --port 57475    # pin the port
 
 The fleet file (created for you on first run if missing):
 
@@ -52,7 +52,7 @@ _TEMPLATE = {
 }
 
 
-def _free_port(start=8900, host="127.0.0.1"):
+def _free_port(start=57475, host="127.0.0.1"):
     port = start
     for _ in range(50):
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
@@ -278,7 +278,7 @@ def cmd_stats(args):
     poller.start()
 
     host = getattr(args, "host", None) or "127.0.0.1"
-    port = getattr(args, "port", None) or _free_port(8900, host)
+    port = getattr(args, "port", None) or _free_port(57475, host)
     httpd = ThreadingHTTPServer((host, port), _make_handler(state, poller))
     url = f"http://{'localhost' if host in ('127.0.0.1', '0.0.0.0') else host}:{port}"
 
@@ -300,76 +300,112 @@ def cmd_stats(args):
         httpd.shutdown()
 
 
-# ── the NOC wall (Direction A) ────────────────────────────────────────
+# ── the fleet radar (Direction: deep-space radar) ─────────────────────
 _PAGE = r"""<!doctype html>
 <html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Fleet · viclix stats</title>
+<title>Fleet Radar · viclix stats</title>
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@500;600;700&family=Share+Tech+Mono&display=swap" rel="stylesheet">
 <style>
-:root{--bg:#050608;--row:#0b0e15;--line:#171d29;--ink:#e9eefb;--dim:#6b7688;
-  --up:#33d17a;--down:#ff5865;--warn:#ffb547;--accent:#5b8cff;
-  --mono:ui-monospace,"SF Mono",Menlo,Consolas,monospace}
+:root{--bg:#020805;--ink:#e8fff2;--dim:#4e7a62;--g:#41ff8a;--g2:#1a6b40;
+  --warn:#ffd257;--bad:#ff5063;
+  --ch:'Chakra Petch',sans-serif;--stm:'Share Tech Mono',monospace}
 *{box-sizing:border-box;margin:0}
-html,body{height:100%}
-body{background:var(--bg);color:var(--ink);
-  font:14px/1.35 ui-sans-serif,system-ui,Segoe UI,Roboto,sans-serif;
-  padding:18px 16px 20px;display:flex;flex-direction:column;gap:12px}
-header{display:flex;align-items:center;justify-content:space-between;
-  padding-bottom:12px;border-bottom:1px solid var(--line)}
-.brand{display:flex;align-items:baseline;gap:10px}
-.brand h1{font-size:19px;letter-spacing:3px;font-weight:700}
-.brand span{color:var(--dim);font:12px/1 var(--mono);letter-spacing:2px}
-.ctrls{display:flex;align-items:center;gap:14px}
-.cd{font:12px/1 var(--mono);letter-spacing:1px;color:var(--dim);min-width:64px;text-align:right}
-.cd b{color:var(--ink)}
-.iv{font:12px/1 var(--mono);letter-spacing:1px;color:var(--dim);display:flex;align-items:center;gap:6px}
-.iv input{width:56px;background:#0b0e15;border:1px solid var(--line);border-radius:8px;color:var(--ink);
-  font:13px/1 var(--mono);text-align:center;padding:6px 4px;outline:none}
-.iv input:focus{border-color:var(--accent)}
-.summary{display:flex;gap:8px}
-.pill{font:12px/1 var(--mono);letter-spacing:1px;padding:6px 10px;border-radius:999px;border:1px solid var(--line)}
-.pill.ok{color:var(--up);border-color:#1c3a2a;background:#0c1a12}
-.pill.bad{color:var(--down);border-color:#3a1c22;background:#1a0c0f}
-.list{display:flex;flex-direction:column;gap:8px;flex:1}
-.app{background:var(--row);border:1px solid var(--line);border-radius:12px;padding:12px 14px;
-  display:grid;grid-template-columns:14px 1fr auto;gap:12px;align-items:center}
-.app.dn{background:linear-gradient(90deg,#1a0c0f,var(--row))}
-.led{width:10px;height:10px;border-radius:50%;background:var(--up);box-shadow:0 0 10px 1px var(--up)}
-.led.dn{background:var(--down);box-shadow:0 0 10px 1px var(--down);animation:blink 1.1s steps(2) infinite}
-.led.wn{background:var(--warn);box-shadow:0 0 10px 1px var(--warn)}
-.led.un{background:#3a4152;box-shadow:none}
-@keyframes blink{50%{opacity:.25}}
-.main{min-width:0}
-.name{display:flex;align-items:center;gap:10px}
-.name b{font-size:16px;letter-spacing:.3px}
-.host{font:11px/1 var(--mono);color:var(--dim)}
-.metrics{display:flex;gap:22px;margin-top:8px;flex-wrap:wrap}
-.m{display:flex;flex-direction:column;gap:2px}
-.m .k{font:10px/1 var(--mono);letter-spacing:1.5px;color:var(--dim);text-transform:uppercase}
-.m .v{font:19px/1 var(--mono);font-weight:600;font-variant-numeric:tabular-nums}
-.err{color:var(--down);font:12px/1.6 var(--mono);margin-top:8px}
-.right{text-align:right;display:flex;flex-direction:column;align-items:flex-end;gap:6px}
-.lat{font:12px/1 var(--mono);color:var(--dim)}
-.lat b{color:var(--ink)}
-.spark{display:flex;align-items:flex-end;gap:2px;height:26px}
-.spark i{width:4px;background:#22304a;border-radius:1px;min-height:3px}
-.spark.dn i{background:#3a1c22}
-.age{font:10px/1 var(--mono);color:var(--dim);letter-spacing:1px}
-footer{display:flex;justify-content:space-between;font:11px/1 var(--mono);color:var(--dim);
-  letter-spacing:1px;padding-top:6px;border-top:1px solid var(--line)}
-.off{opacity:.55;text-align:center;color:var(--dim);padding:40px;font-style:italic}
+body{background:var(--bg);color:var(--ink);font-family:var(--ch);
+  min-height:100vh;display:flex;justify-content:center}
+body::before{content:"";position:fixed;inset:0;pointer-events:none;
+  background:
+   radial-gradient(80% 40% at 50% 8%,rgba(65,255,138,.06),transparent 65%),
+   repeating-linear-gradient(0deg,rgba(65,255,138,.02) 0 1px,transparent 1px 4px)}
+.wall{position:relative;width:min(700px,100%);min-height:100vh;
+  display:flex;flex-direction:column;padding:16px 16px 10px;gap:10px}
+header{display:flex;justify-content:space-between;align-items:flex-end;padding:0 2px}
+h1{font-size:20px;font-weight:700;letter-spacing:5px}
+h1 small{display:block;font:10px var(--stm);letter-spacing:3px;color:var(--dim);margin-top:4px}
+h1 small em{font-style:normal;color:var(--bad)}
+.hr{text-align:right;font:11px var(--stm);color:var(--dim);letter-spacing:2px;line-height:1.7}
+.hr b{color:var(--ink);font-size:15px;letter-spacing:1px}
+.hr i{font-style:normal;color:var(--g)}
+/* ── radar ── */
+.radarwrap{display:flex;justify-content:center;padding:6px 0 2px}
+.radar{position:relative;width:min(330px,78vw);aspect-ratio:1;border-radius:50%;
+  background:radial-gradient(circle,#03150c 0%,#020b06 70%);
+  border:1px solid var(--g2);
+  box-shadow:0 0 40px rgba(65,255,138,.12),inset 0 0 60px rgba(65,255,138,.05)}
+.radar .ring{position:absolute;border-radius:50%;border:1px solid rgba(65,255,138,.16)}
+.radar .r1{inset:16.6%}.radar .r2{inset:33.3%}.radar .r3{inset:41.6%}
+.radar .cross{position:absolute;background:rgba(65,255,138,.12)}
+.radar .cx{left:0;right:0;top:50%;height:1px}
+.radar .cyx{top:0;bottom:0;left:50%;width:1px}
+.sweep{position:absolute;inset:0;border-radius:50%;overflow:hidden;
+  animation:rot 4.2s linear infinite}
+.sweep::before{content:"";position:absolute;inset:0;
+  background:conic-gradient(from 0deg,rgba(65,255,138,.35),rgba(65,255,138,.05) 70deg,transparent 90deg)}
+@keyframes rot{to{transform:rotate(360deg)}}
+.blip{position:absolute;transform:translate(-50%,-50%);text-align:center;z-index:2}
+.blip .dot{display:block;width:11px;height:11px;border-radius:50%;background:var(--g);margin:0 auto;
+  box-shadow:0 0 12px var(--g);animation:pulse 2.4s ease-out infinite}
+.blip.warn .dot{background:var(--warn);box-shadow:0 0 12px var(--warn)}
+.blip.bad .dot{background:var(--bad);box-shadow:0 0 14px var(--bad);animation:bk .8s steps(2) infinite}
+.blip.pend .dot{background:#37503f;box-shadow:none;animation:none}
+@keyframes pulse{0%{box-shadow:0 0 0 0 rgba(65,255,138,.5)}70%{box-shadow:0 0 0 12px rgba(65,255,138,0)}100%{box-shadow:0 0 0 0 rgba(65,255,138,0)}}
+@keyframes bk{50%{opacity:.3}}
+.blip .bl{display:block;margin-top:4px;font:600 10px var(--ch);letter-spacing:1.5px;
+  color:var(--ink);text-shadow:0 0 8px rgba(0,0,0,.9);white-space:nowrap}
+.blip.bad .bl{color:#ffb3ba}
+.blip.pend .bl{color:var(--dim)}
+.radar .center{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);
+  width:8px;height:8px;border-radius:50%;background:var(--ink);
+  box-shadow:0 0 10px rgba(232,255,242,.8)}
+/* ── contact list ── */
+.list{flex:1;display:flex;flex-direction:column;gap:8px}
+.row{--c:var(--g);display:flex;flex-direction:column;gap:9px;
+  background:rgba(65,255,138,.035);border:1px solid rgba(65,255,138,.14);
+  border-left:3px solid var(--c);border-radius:4px;padding:10px 14px 11px}
+.row.warn{--c:var(--warn)}
+.row.pend{--c:#37503f;opacity:.7}
+.row.bad{--c:var(--bad);background:rgba(255,80,99,.05);border-color:rgba(255,80,99,.25)}
+.rh{display:flex;align-items:baseline;gap:10px;flex-wrap:wrap}
+.rh b{font-size:17px;font-weight:700;letter-spacing:2px}
+.rh .host{font:10px var(--stm);color:var(--dim);flex:1}
+.rh .png{font:11px var(--stm);color:var(--dim)}
+.rh .png b{font-size:13px;color:var(--ink);letter-spacing:0}
+.rh .tag{font:700 11px var(--ch);letter-spacing:2px;color:var(--c)}
+.row.bad .tag{background:var(--bad);color:#fff;padding:2px 8px;border-radius:2px;
+  animation:bk .9s steps(2) infinite}
+.rm{display:flex;flex-wrap:wrap;gap:6px 24px}
+.rm .m{display:flex;align-items:baseline;gap:8px}
+.rm .m b{font-size:23px;font-weight:700;font-variant-numeric:tabular-nums}
+.rm .m i{font-style:normal;font:600 11px var(--ch);letter-spacing:1px;color:var(--dim);
+  text-transform:uppercase}
+.lost{font:12px var(--stm);color:#ff9aa5;letter-spacing:1px}
+.pendnote{font:12px var(--stm);color:var(--dim);letter-spacing:1px}
+.off{opacity:.55;text-align:center;color:var(--dim);padding:40px;font:13px var(--stm)}
+footer{display:flex;justify-content:space-between;align-items:center;font:10px var(--stm);
+  letter-spacing:2px;color:var(--dim);padding:2px 4px 4px}
+footer label{display:flex;align-items:center;gap:6px}
+footer input{width:48px;background:#03150c;border:1px solid var(--g2);border-radius:3px;
+  color:var(--g);font:12px var(--stm);text-align:center;padding:3px 2px;outline:none}
+footer input:focus{border-color:var(--g)}
 </style></head>
 <body>
-<header>
-  <div class="brand"><h1>FLEET</h1><span id="sub">live</span></div>
-  <div class="ctrls">
-    <span class="cd" id="cd">next —</span>
-    <label class="iv">every <input id="iv" type="number" min="__MIN__" max="__MAX__" step="1"> s</label>
-    <span class="summary" id="sum"></span>
+<div class="wall">
+  <header>
+    <div><h1>FLEET RADAR<small id="sub">VICLIX · CONNECTING…</small></h1></div>
+    <div class="hr"><b id="clk"></b><br><span id="cd">sweep —</span></div>
+  </header>
+  <div class="radarwrap">
+    <div class="radar">
+      <div class="ring r1"></div><div class="ring r2"></div><div class="ring r3"></div>
+      <div class="cross cx"></div><div class="cross cyx"></div>
+      <div class="sweep"></div><div id="blips"></div><div class="center"></div>
+    </div>
   </div>
-</header>
-<div class="list" id="list"><div class="off">connecting…</div></div>
-<footer><span>viclix stats</span><span id="clk"></span></footer>
+  <div class="list" id="list"><div class="off">acquiring contacts…</div></div>
+  <footer><span id="foot">viclix stats</span>
+    <label>SWEEP EVERY <input id="iv" type="number" min="__MIN__" max="__MAX__" step="1"> S</label></footer>
+</div>
 <script>
 const MINR=__MIN__, MAXR=__MAX__;
 let sig=null, nextAt=0, refresh=15;
@@ -380,35 +416,51 @@ function fmtVal(v,f){if(v==null)return"—";
   if(typeof v==="object")return Object.values(v).map(x=>fmtVal(x,f)).join(" / ");
   return String(v);}
 function host(u){try{return new URL(u).host}catch(e){return u}}
-function spark(hist,dn){
-  if(!hist||!hist.length)hist=[0];
-  const max=Math.max(...hist,1),min=Math.min(...hist,0),rng=(max-min)||1;
-  return `<div class="spark ${dn?'dn':''}">`+hist.map(v=>{
-    const h=4+Math.round(20*((v-min)/rng));return `<i style="height:${h}px"></i>`}).join("")+`</div>`;
+function age(s){if(s==null)return "—";if(s<60)return s+"s";if(s<3600)return Math.floor(s/60)+"m";return Math.floor(s/3600)+"h";}
+function stateOf(a){
+  if(a.ok===null||!a.updated)return "pend";
+  if(!a.ok)return "bad";
+  const stale=a.age_s!=null&&a.age_s>refresh*3;
+  return (stale||a.latency_ms>1500)?"warn":"ok";
+}
+const TAGS={ok:"STABLE",warn:"SLOW",bad:"LOST",pend:"…"};
+/* deterministic blip position per app: spread by index, jittered by name hash */
+function hash(s){let h=0;for(const c of s)h=(h*31+c.charCodeAt(0))|0;return Math.abs(h);}
+const POS={};
+function posFor(name,i,n){
+  const key=name+"/"+i+"/"+n;
+  if(POS[key])return POS[key];
+  const h=hash(name);
+  const ang=((i*(360/Math.max(n,1)))+(h%36)-18-90)*Math.PI/180;
+  const r=17+((h>>4)%22);
+  POS[key]={x:50+r*Math.cos(ang), y:50+r*Math.sin(ang)};
+  return POS[key];
+}
+function renderBlips(apps){
+  document.getElementById("blips").innerHTML=apps.map((a,i)=>{
+    const st=stateOf(a),p=posFor(a.name,i,apps.length);
+    return `<div class="blip ${st==="ok"?"":st}" style="left:${p.x}%;top:${p.y}%">
+      <span class="dot"></span><span class="bl">${a.name.split(" ")[0].toUpperCase()}</span></div>`;
+  }).join("");
 }
 function metricCells(ms){
-  if(!ms||!ms.length)return "";
-  return ms.slice(0,5).map(m=>`<div class="m"><span class="k">${m.label||m.key}</span>
-    <span class="v">${fmtVal(m.value,m.fmt)}</span></div>`).join("");
+  if(!ms||!ms.length)return `<span class="m"><i>no metrics</i></span>`;
+  return ms.slice(0,6).map(m=>`<span class="m"><b>${fmtVal(m.value,m.fmt)}</b>
+    <i>${m.label||m.key||""}</i></span>`).join("");
 }
-function age(s){if(s==null)return "—";if(s<60)return s+"s";if(s<3600)return Math.floor(s/60)+"m";return Math.floor(s/3600)+"h";}
 function renderList(apps){
   const rows=apps.map(a=>{
-    const pending=a.ok===null||a.updated===0;
-    const stale=a.age_s!=null&&a.age_s>refresh*3;
-    const led=pending?"un":(!a.ok?"dn":((stale||a.latency_ms>1500)?"wn":""));
-    const right = a.ok
-      ? `<span class="lat">lat <b>${a.latency_ms??'—'}ms</b></span>${spark(a.history,false)}<span class="age">↻ ${age(a.age_s)}</span>`
-      : `<span style="color:var(--down);font:12px/1 var(--mono)">${pending?'…':(a.error||'down')}</span>${spark(a.history,true)}<span class="age">↻ ${age(a.age_s)}</span>`;
-    const body = a.ok
-      ? `<div class="metrics">${metricCells(a.metrics)||'<span class="host">no metrics</span>'}</div>`
-      : (pending?``:`<div class="err">${a.error||'no response'}</div>`);
-    return `<div class="app ${a.ok?'':'dn'}">
-      <div class="led ${led}"></div>
-      <div class="main"><div class="name"><b>${a.name}</b><span class="host">${host(a.url)}</span></div>${body}</div>
-      <div class="right">${right}</div></div>`;
+    const st=stateOf(a);
+    const ping=a.latency_ms!=null?`<span class="png">ping <b>${a.latency_ms}ms</b></span>`:"";
+    let body;
+    if(st==="pend")body=`<div class="pendnote">acquiring signal…</div>`;
+    else if(st==="bad")body=`<div class="lost">${a.error||"no response"} · last echo ${age(a.age_s)} ago</div>`;
+    else body=`<div class="rm">${metricCells(a.metrics)}</div>`;
+    return `<section class="row ${st==="ok"?"":st}">
+      <div class="rh"><b>${a.name}</b><span class="host">${host(a.url)}</span>
+        ${ping}<span class="tag">${TAGS[st]}</span></div>${body}</section>`;
   }).join("");
-  document.getElementById("list").innerHTML=rows||`<div class="off">no apps</div>`;
+  document.getElementById("list").innerHTML=rows||`<div class="off">no contacts</div>`;
 }
 // ── refresh-interval input (changes the real server-side pull cadence) ──
 const ivInput=document.getElementById("iv");
@@ -429,16 +481,17 @@ async function poll(){
   let d;try{d=await(await fetch("/state")).json();}catch(e){return;}
   refresh=d.refresh; nextAt=(d.next_at||0)*1000;
   if(!ivDirty && document.activeElement!==ivInput) ivInput.value=refresh;
-  document.getElementById("sub").textContent=`live · every ${refresh}s`;
-  document.getElementById("sum").innerHTML=
-    `<span class="pill ok">${d.up} UP</span>`+(d.down?`<span class="pill bad">${d.down} DOWN</span>`:``);
+  const n=d.apps.length;
+  document.getElementById("sub").innerHTML=
+    `VICLIX · ${n} CONTACT${n===1?"":"S"} · ${d.up} UP`+(d.down?` · <em>${d.down} LOST</em>`:``);
   const s=signature(d.apps);
-  if(s!==sig){sig=s;renderList(d.apps);}
+  if(s!==sig){sig=s;renderList(d.apps);renderBlips(d.apps);}
 }
 function beat(){
   const secs=nextAt?Math.max(0,Math.ceil((nextAt-Date.now())/1000)):0;
-  document.getElementById("cd").innerHTML=nextAt?`next <b>${secs}s</b>`:"next —";
-  document.getElementById("clk").textContent=new Date().toLocaleTimeString();
+  document.getElementById("cd").innerHTML=
+    nextAt?`sweep in <i>${secs}</i>s · every ${refresh}s`:"sweep —";
+  document.getElementById("clk").textContent=new Date().toTimeString().slice(0,8);
 }
 poll(); setInterval(poll,1000); beat(); setInterval(beat,250);
 </script>

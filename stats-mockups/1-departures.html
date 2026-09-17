@@ -1,0 +1,175 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Mockup 1 — Split-flap departures board</title>
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Oswald:wght@400;500;600&family=JetBrains+Mono:wght@400;600;700&display=swap" rel="stylesheet">
+<style>
+:root{
+  --bg:#050505; --board:#0d0d10; --slat:#141419; --slat2:#1d1d24;
+  --line:#1c1c22; --amber:#ffb02e; --white:#f2efe6; --dim:#5c5c66;
+  --green:#37e07c; --red:#ff4d57;
+  --osw:'Oswald',sans-serif; --mono:'JetBrains Mono',monospace;
+}
+*{box-sizing:border-box;margin:0}
+body{background:var(--bg);color:var(--white);font-family:var(--osw);
+  min-height:100vh;display:flex;justify-content:center;padding:0}
+.wall{width:min(720px,100%);min-height:100vh;background:var(--board);
+  display:flex;flex-direction:column;padding:22px 18px 14px;
+  box-shadow:0 0 120px rgba(0,0,0,.9) inset}
+/* ── header ── */
+header{display:flex;align-items:flex-end;justify-content:space-between;
+  padding-bottom:16px;border-bottom:2px solid var(--line)}
+.dep{display:flex;flex-direction:column;gap:6px}
+.dep small{font:600 10px/1 var(--mono);letter-spacing:4px;color:var(--amber)}
+.dep h1{font-size:30px;font-weight:600;letter-spacing:6px;line-height:1}
+.hdr-right{display:flex;flex-direction:column;align-items:flex-end;gap:8px}
+.clockrow{display:flex;gap:6px;align-items:center}
+.next{font:600 10px/1 var(--mono);letter-spacing:2px;color:var(--dim)}
+.next b{color:var(--amber);font-size:12px}
+/* ── flap tiles ── */
+.flap{display:inline-flex;gap:2px}
+.tile{position:relative;display:inline-flex;align-items:center;justify-content:center;
+  background:linear-gradient(#26262e 0%,#1b1b21 47%,#101015 53%,#191920 100%);
+  border-radius:3px;font-weight:500;overflow:hidden;
+  box-shadow:0 2px 3px rgba(0,0,0,.6), inset 0 1px 0 rgba(255,255,255,.05);
+  transition:transform .07s;transform-origin:center 50%}
+.tile::after{content:"";position:absolute;left:0;right:0;top:50%;height:1px;
+  background:rgba(0,0,0,.75)}
+.tile.sep{background:none;box-shadow:none}
+.tile.sep::after{display:none}
+.tile.flip{transform:rotateX(80deg)}
+.flap.sz-name .tile{width:24px;height:34px;font-size:20px;color:var(--white);letter-spacing:0}
+.flap.sz-name .tile.sep{width:8px}
+.flap.sz-num .tile{width:21px;height:32px;font-size:19px;color:var(--amber);
+  font-family:var(--mono);font-weight:600}
+.flap.sz-num .tile.sep{width:9px;color:var(--amber);font-size:15px}
+.flap.sz-sm .tile{width:15px;height:22px;font-size:13px;color:var(--white);font-family:var(--mono)}
+.flap.sz-sm .tile.sep{width:6px}
+.flap.red .tile{color:var(--red)}
+.flap.dimmed .tile{color:var(--dim)}
+/* ── rows ── */
+.rows{display:flex;flex-direction:column;flex:1;padding-top:4px}
+.row{padding:16px 2px 14px;border-bottom:1px solid var(--line)}
+.rowtop{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+.host{font:400 10px/1 var(--mono);letter-spacing:1px;color:var(--dim);flex:1}
+.status{font:600 11px/1 var(--mono);letter-spacing:3px;padding:6px 10px 5px;border-radius:2px}
+.status.ok{color:#04120a;background:var(--green)}
+.status.slow{color:#171001;background:var(--amber)}
+.status.down{color:#fff;background:var(--red);animation:blink 1s steps(2) infinite}
+@keyframes blink{50%{opacity:.35}}
+.mgrid{display:flex;flex-wrap:wrap;gap:14px 26px;margin-top:13px}
+.m{display:flex;flex-direction:column;gap:6px}
+.m .k{font:600 9px/1 var(--mono);letter-spacing:2.5px;color:var(--dim)}
+.m.lat .k{color:#3d3d46}
+.gone{margin-top:13px;display:flex;align-items:center;gap:12px}
+.gone .note{font:400 11px/1.5 var(--mono);color:var(--dim);letter-spacing:1px}
+footer{display:flex;justify-content:space-between;align-items:center;
+  padding-top:12px;font:600 9px/1 var(--mono);letter-spacing:3px;color:var(--dim)}
+footer .iv{display:flex;align-items:center;gap:6px}
+footer input{width:46px;background:var(--slat);border:1px solid var(--line);border-radius:3px;
+  color:var(--amber);font:600 12px/1 var(--mono);text-align:center;padding:4px 2px;outline:none}
+</style></head>
+<body>
+<div class="wall">
+  <header>
+    <div class="dep">
+      <small>VICLIX &nbsp;FLEET</small>
+      <h1>DEPARTURES</h1>
+    </div>
+    <div class="hdr-right">
+      <div class="clockrow flap sz-sm" id="clock"></div>
+      <span class="next">NEXT PULL <b id="cd">12s</b> · <span id="upsum">4/5 ON AIR</span></span>
+    </div>
+  </header>
+  <div class="rows" id="rows"></div>
+  <footer>
+    <span>VICLIX STATS</span>
+    <span class="iv">EVERY <input value="30"> S</span>
+  </footer>
+</div>
+<script>
+const APPS=[
+ {name:"JUDGLY",host:"app.judgly.com",st:"ok",lat:"1271",
+  m:[["TOTAL USERS","9"],["ACTIVE POLLS","34"],["TOTAL VOTES","203"],["PURCHASED","$0"],["SPENT","$424"]]},
+ {name:"SAVAGESCROLL",host:"app.savagescroll.com",st:"ok",lat:"886",
+  m:[["TOTAL USERS","10"],["PAGES","12"],["POSTED","14"],["SCHEDULED","2,188"],["ACTIVE SUBS","0"]]},
+ {name:"CHEF SIZTH",host:"chef.sizth.com",st:"down",lat:null,m:null},
+ {name:"VAULT",host:"jp-vault.viclix.com",st:"slow",lat:"1670",
+  m:[["USERS","1"],["LIVE SERVICES","6"],["API CALLS","3"],["CREDITS","$99.87"],["REVENUE","$0"]]},
+ {name:"GEO FALL",host:"geofall.net",st:"slow",lat:"1955",
+  m:[["PLAYERS","8"],["ACTIVE 5M","0"],["BASES","7"],["SIGNUPS TODAY","3"],["TOTAL SCRAP","3,193"]]},
+];
+const SEPS=new Set([",",".",":"," "]);
+function flap(text,cls){
+  const w=document.createElement("span");w.className="flap "+cls;
+  for(const ch of text){
+    const t=document.createElement("span");
+    t.className="tile"+(SEPS.has(ch)?" sep":"");
+    t.textContent=ch;t.dataset.ch=ch;w.appendChild(t);
+  }
+  return w;
+}
+const STMAP={ok:["ON AIR","ok"],slow:["SLOW","slow"],down:["DOWN","down"]};
+const rows=document.getElementById("rows");
+for(const a of APPS){
+  const r=document.createElement("section");r.className="row";
+  const top=document.createElement("div");top.className="rowtop";
+  top.appendChild(flap(a.name,"sz-name"));
+  const h=document.createElement("span");h.className="host";h.textContent=a.host;top.appendChild(h);
+  const s=document.createElement("span");s.className="status "+STMAP[a.st][1];
+  s.textContent=STMAP[a.st][0];top.appendChild(s);
+  r.appendChild(top);
+  if(a.m){
+    const g=document.createElement("div");g.className="mgrid";
+    for(const[k,v]of a.m){
+      const m=document.createElement("div");m.className="m";
+      m.innerHTML=`<span class="k">${k}</span>`;
+      m.appendChild(flap(v,"sz-num"));g.appendChild(m);
+    }
+    const lat=document.createElement("div");lat.className="m lat";
+    lat.innerHTML=`<span class="k">LATENCY MS</span>`;
+    lat.appendChild(flap(a.lat,"sz-num dimmed"));g.appendChild(lat);
+    r.appendChild(g);
+  }else{
+    const g=document.createElement("div");g.className="gone";
+    g.appendChild(flap("SIGNAL LOST","sz-num red"));
+    const n=document.createElement("span");n.className="note";
+    n.textContent="no response · last seen 2m ago";g.appendChild(n);
+    r.appendChild(g);
+  }
+  rows.appendChild(r);
+}
+/* clock tiles */
+const clock=document.getElementById("clock");
+function setClock(){
+  const t=new Date().toTimeString().slice(0,8);
+  if(clock.dataset.v===t)return;
+  clock.dataset.v=t;clock.innerHTML="";
+  for(const ch of t){
+    const s=document.createElement("span");
+    s.className="tile"+(ch===":"?" sep":"");s.textContent=ch;s.dataset.ch=ch;
+    clock.appendChild(s);
+  }
+}
+setClock();setInterval(setClock,500);
+/* countdown */
+let cd=12;
+setInterval(()=>{cd=cd<=1?30:cd-1;document.getElementById("cd").textContent=cd+"s";},1000);
+/* random flap ticks — a digit spins through chars and settles back */
+const digits=[...document.querySelectorAll(".sz-num .tile:not(.sep)")]
+  .filter(t=>/[0-9]/.test(t.dataset.ch));
+function spin(t){
+  const real=t.dataset.ch;let n=0;
+  const iv=setInterval(()=>{
+    t.classList.add("flip");
+    setTimeout(()=>{
+      t.textContent=n<3?String(Math.floor(Math.random()*10)):real;
+      t.classList.remove("flip");
+    },70);
+    if(++n>3)clearInterval(iv);
+  },150);
+}
+setInterval(()=>{ if(digits.length) spin(digits[Math.floor(Math.random()*digits.length)]); },1800);
+</script>
+</body></html>

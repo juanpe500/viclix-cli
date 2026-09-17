@@ -1,0 +1,155 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Mockup 3 — Chalkboard exchange</title>
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Caveat:wght@500;600;700&family=Patrick+Hand&display=swap" rel="stylesheet">
+<style>
+:root{--chalk:#eef2e4;--dimc:#a9bcab;--red:#ff8577;--yellow:#ffd98a;
+  --cav:'Caveat',cursive;--ph:'Patrick Hand',cursive}
+*{box-sizing:border-box;margin:0}
+body{background:linear-gradient(160deg,#4a3423,#33220f);min-height:100vh;
+  display:flex;justify-content:center;font-family:var(--ph);color:var(--chalk)}
+.frame{width:min(700px,100%);min-height:100vh;padding:12px;
+  background:linear-gradient(180deg,#7c5a3a,#5d4128);
+  box-shadow:inset 0 2px 6px rgba(255,255,255,.18),inset 0 -4px 8px rgba(0,0,0,.45)}
+.board{position:relative;min-height:calc(100vh - 24px);border-radius:6px;overflow:hidden;
+  background:radial-gradient(120% 90% at 50% 30%,#274036 0%,#1e332a 55%,#16261f 100%);
+  box-shadow:inset 0 0 60px rgba(0,0,0,.55);
+  padding:26px 26px 20px;display:flex;flex-direction:column}
+/* chalk dust + smudges */
+.board::before{content:"";position:absolute;inset:0;pointer-events:none;opacity:.5;
+  background-image:url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="220" height="220"><filter id="n"><feTurbulence type="fractalNoise" baseFrequency="0.9" numOctaves="2"/><feColorMatrix values="0 0 0 0 1  0 0 0 0 1  0 0 0 0 1  0 0 0 0.045 0"/></filter><rect width="220" height="220" filter="url(%23n)"/></svg>')}
+.board::after{content:"";position:absolute;inset:0;pointer-events:none;
+  background:
+   radial-gradient(240px 60px at 22% 88%,rgba(238,242,228,.05),transparent 70%),
+   radial-gradient(300px 70px at 75% 40%,rgba(238,242,228,.035),transparent 70%)}
+svg.fx{position:absolute;width:0;height:0}
+.rough{filter:url(#rough)}
+/* header */
+header{display:flex;align-items:flex-end;justify-content:space-between;gap:10px;
+  padding-bottom:6px}
+h1{font-family:var(--cav);font-weight:700;font-size:52px;line-height:.9;
+  transform:rotate(-1.6deg)}
+.under{margin:2px 0 0 4px}
+.hr{text-align:right;font-size:15px;color:var(--dimc);line-height:1.5}
+.hr b{color:var(--chalk);font-family:var(--cav);font-size:22px;font-weight:600}
+/* app blocks */
+.apps{flex:1;display:flex;flex-direction:column}
+.app{position:relative;padding:16px 2px 14px}
+.app + .app{border-top:0}
+.divider{opacity:.55}
+.aphead{display:flex;align-items:baseline;gap:12px;flex-wrap:wrap}
+.aname{position:relative;font-family:var(--cav);font-weight:700;font-size:34px;
+  line-height:1;transform:rotate(-.8deg)}
+.aname svg.circle{position:absolute;left:-14px;top:-12px;width:calc(100% + 28px);
+  height:calc(100% + 24px);overflow:visible}
+.host{font-size:13px;color:var(--dimc);letter-spacing:.5px}
+.ping{margin-left:auto;font-size:14px;color:var(--dimc)}
+.ping.hot{color:var(--yellow)}
+.mrow{display:flex;flex-wrap:wrap;align-items:flex-end;gap:6px 28px;margin-top:10px}
+.m{display:flex;flex-direction:column}
+.m b{font-family:var(--cav);font-weight:600;font-size:38px;line-height:1;
+  transform:rotate(-1deg)}
+.m i{font-style:normal;font-size:12.5px;color:var(--dimc);margin-top:2px}
+.sparkwrap{margin-left:auto;align-self:center}
+.downnote{margin-top:8px;font-family:var(--cav);font-size:24px;font-weight:600;
+  color:var(--red);transform:rotate(-1.2deg)}
+.downsub{font-size:13px;color:#d99a91}
+footer{display:flex;justify-content:space-between;align-items:flex-end;
+  padding-top:12px;font-size:14px;color:var(--dimc)}
+footer .cav{font-family:var(--cav);font-size:20px;font-weight:600;color:var(--chalk)}
+.tally{vertical-align:-4px;margin-left:6px}
+</style></head>
+<body>
+<svg class="fx" xmlns="http://www.w3.org/2000/svg">
+  <filter id="rough"><feTurbulence type="fractalNoise" baseFrequency="0.045" numOctaves="4" seed="7"/>
+    <feDisplacementMap in="SourceGraphic" scale="4.5"/></filter>
+  <filter id="rough2"><feTurbulence type="fractalNoise" baseFrequency="0.09" numOctaves="3" seed="3"/>
+    <feDisplacementMap in="SourceGraphic" scale="6"/></filter>
+</svg>
+<div class="frame"><div class="board">
+  <header>
+    <div>
+      <h1>tonight&rsquo;s fleet <span style="font-size:30px">✶</span></h1>
+      <svg class="under rough" width="240" height="10"><path d="M2 5 Q 60 1, 120 5 T 238 4" fill="none" stroke="#eef2e4" stroke-width="2.4" stroke-linecap="round"/></svg>
+    </div>
+    <div class="hr">
+      sep 17 &nbsp;·&nbsp; <b id="clk">10:10</b><br>
+      up: <svg class="tally rough2" width="52" height="20">
+        <g stroke="#eef2e4" stroke-width="2.2" stroke-linecap="round">
+          <line x1="4" y1="3" x2="4" y2="17"/><line x1="12" y1="3" x2="12" y2="17"/>
+          <line x1="20" y1="3" x2="20" y2="17"/><line x1="28" y1="3" x2="28" y2="17"/>
+          <line x1="0" y1="15" x2="33" y2="5"/>
+        </g>
+        <g stroke="#ff8577" stroke-width="2.2" stroke-linecap="round">
+          <line x1="42" y1="4" x2="50" y2="16"/><line x1="50" y1="4" x2="42" y2="16"/>
+        </g></svg><br>
+      next check in <b id="cd" style="font-size:19px">12s</b>
+    </div>
+  </header>
+  <div class="apps" id="apps"></div>
+  <footer>
+    <span>viclix stats — checking every <span class="cav">30s</span></span>
+    <span class="cav" style="transform:rotate(-1deg)">be good, apps ✎</span>
+  </footer>
+</div></div>
+<script>
+const APPS=[
+ {name:"Judgly",host:"app.judgly.com",ping:"1.3s ping",hot:false,
+  m:[["9","total users"],["34","active polls"],["203","total votes"],["$0","purchased"],["$424","spent"]],
+  spark:[3,4,4,6,5,7,6,8,7,9,8,10]},
+ {name:"SavageScroll",host:"app.savagescroll.com",ping:"0.9s ping",hot:false,
+  m:[["10","total users"],["12","pages"],["14","posted"],["2,188","scheduled"],["0","active subs"]],
+  spark:[5,5,6,6,7,7,7,8,9,9,10,11]},
+ {name:"Chef Sizth",host:"chef.sizth.com",down:true},
+ {name:"Vault",host:"jp-vault.viclix.com",ping:"1.7s ping",hot:true,
+  m:[["1","users"],["6","live services"],["3","api calls"],["$99.87","credits"],["$0","revenue"]],
+  spark:[8,7,7,6,7,5,6,5,4,5,4,4]},
+ {name:"Geo Fall",host:"geofall.net",ping:"2.0s ping",hot:true,
+  m:[["8","players"],["0","active 5m"],["7","bases"],["3","signups today"],["3,193","total scrap"]],
+  spark:[2,3,3,5,4,6,7,6,8,9,9,10]},
+];
+function sparkSVG(data,color){
+  const w=110,h=34,max=Math.max(...data),min=Math.min(...data),r=(max-min)||1;
+  const pts=data.map((v,i)=>[4+i*(w-8)/(data.length-1), h-5-(v-min)/r*(h-12)]);
+  let d=`M ${pts[0][0]} ${pts[0][1]}`;
+  for(let i=1;i<pts.length;i++){
+    const[x,y]=pts[i],[px,py]=pts[i-1];
+    d+=` Q ${(px+x)/2+(Math.random()*2-1)} ${(py+y)/2+(Math.random()*2-1)}, ${x} ${y}`;
+  }
+  return `<svg class="rough2" width="${w}" height="${h}"><path d="${d}" fill="none"
+    stroke="${color}" stroke-width="2.4" stroke-linecap="round"/>
+    <circle cx="${pts.at(-1)[0]}" cy="${pts.at(-1)[1]}" r="2.6" fill="${color}"/></svg>`;
+}
+const dividerSVG=()=>`<svg class="divider rough" width="100%" height="8" preserveAspectRatio="none">
+  <line x1="0" y1="4" x2="100%" y2="4" stroke="#a9bcab" stroke-width="1.4" stroke-dasharray="10 12" stroke-linecap="round"/></svg>`;
+const circleSVG=`<svg class="circle rough" viewBox="0 0 100 40" preserveAspectRatio="none">
+  <ellipse cx="50" cy="20" rx="47" ry="16" fill="none" stroke="#ff8577" stroke-width="2.6"
+   stroke-linecap="round" stroke-dasharray="290" stroke-dashoffset="8" transform="rotate(-2 50 20)"/></svg>`;
+const wrap=document.getElementById("apps");
+APPS.forEach((a,i)=>{
+  if(i)wrap.insertAdjacentHTML("beforeend",dividerSVG());
+  const el=document.createElement("section");el.className="app";
+  if(a.down){
+    el.innerHTML=`<div class="aphead">
+        <span class="aname">${circleSVG}${a.name}</span>
+        <span class="host">${a.host}</span></div>
+      <div class="downnote">went dark — no answer! <span style="font-size:20px">(ಥ_ಥ)</span></div>
+      <div class="downsub">timed out twice · last seen 2 min ago</div>`;
+  }else{
+    el.innerHTML=`<div class="aphead">
+        <span class="aname">${a.name}</span>
+        <span class="host">${a.host}</span>
+        <span class="ping${a.hot?' hot':''}">~${a.ping}</span></div>
+      <div class="mrow">${a.m.map(([v,k])=>`<span class="m"><b>${v}</b><i>${k}</i></span>`).join("")}
+        <span class="sparkwrap">${sparkSVG(a.spark,"#eef2e4")}</span></div>`;
+  }
+  wrap.appendChild(el);
+});
+setInterval(()=>{document.getElementById("clk").textContent=
+  new Date().toTimeString().slice(0,5)},1000);
+let cd=12;setInterval(()=>{cd=cd<=1?30:cd-1;
+  document.getElementById("cd").textContent=cd+"s"},1000);
+</script>
+</body></html>

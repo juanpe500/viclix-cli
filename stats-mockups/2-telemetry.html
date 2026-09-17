@@ -1,0 +1,134 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Mockup 2 — Vitals telemetry wall</title>
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+:root{--bg:#03070b;--panel:#060d13;--line:#0d1a24;--dim:#4e6172;--ink:#dfeef5;
+  --mono:'IBM Plex Mono',monospace}
+*{box-sizing:border-box;margin:0}
+body{background:var(--bg);color:var(--ink);font-family:var(--mono);
+  min-height:100vh;display:flex;justify-content:center}
+.wall{width:min(700px,100%);min-height:100vh;display:flex;flex-direction:column;
+  padding:16px 14px 10px;gap:10px}
+/* header */
+header{display:flex;align-items:center;justify-content:space-between;
+  padding:4px 4px 12px;border-bottom:1px solid var(--line)}
+.t h1{font-size:15px;font-weight:700;letter-spacing:5px}
+.t small{display:block;margin-top:5px;font-size:9px;letter-spacing:3px;color:var(--dim)}
+.hr{display:flex;flex-direction:column;align-items:flex-end;gap:5px}
+.clk{font-size:15px;font-weight:600;letter-spacing:2px}
+.sub{font-size:9px;letter-spacing:2px;color:var(--dim)}
+.sub b{color:#3aff9e}.sub i{color:#ff4d57;font-style:normal;animation:bk 1s steps(2) infinite}
+@keyframes bk{50%{opacity:.3}}
+/* channels */
+.chs{display:flex;flex-direction:column;gap:10px;flex:1}
+.ch{background:var(--panel);border:1px solid var(--line);border-left:3px solid var(--c);
+  border-radius:6px;padding:10px 12px 8px}
+.ch.dead{--c:#ff4d57;background:linear-gradient(180deg,#120608,var(--panel) 60%)}
+.chh{display:flex;align-items:baseline;gap:10px}
+.chh b{font-size:14px;font-weight:700;letter-spacing:1px;color:var(--c)}
+.host{font-size:9px;letter-spacing:1px;color:var(--dim);flex:1}
+.bpm{font-size:18px;font-weight:700;color:var(--c);font-variant-numeric:tabular-nums}
+.bpm small{font-size:9px;font-weight:400;color:var(--dim);margin-left:3px}
+.tag{font-size:8px;letter-spacing:2px;color:#000;background:var(--c);
+  padding:3px 6px;border-radius:2px;font-weight:700}
+.ch.dead .tag{animation:bk .8s steps(2) infinite}
+.scope{position:relative;height:58px;margin:8px 0 6px;border-radius:3px;overflow:hidden;
+  background:
+   repeating-linear-gradient(90deg,rgba(80,140,180,.06) 0 1px,transparent 1px 18px),
+   repeating-linear-gradient(0deg,rgba(80,140,180,.06) 0 1px,transparent 1px 14px),
+   #040a10}
+.scope canvas{position:absolute;inset:0;width:100%;height:100%}
+.vit{display:flex;flex-wrap:wrap;gap:4px 22px}
+.v{display:flex;align-items:baseline;gap:7px}
+.v i{font-size:8px;font-style:normal;letter-spacing:1.5px;color:var(--dim)}
+.v b{font-size:14px;font-weight:600;color:var(--ink);font-variant-numeric:tabular-nums}
+.deadnote{font-size:10px;color:#ff8a92;letter-spacing:1px;padding:2px 0 4px}
+footer{display:flex;justify-content:space-between;align-items:center;
+  padding:10px 4px 4px;border-top:1px solid var(--line);
+  font-size:9px;letter-spacing:2px;color:var(--dim)}
+footer input{width:44px;background:#08131c;border:1px solid var(--line);border-radius:3px;
+  color:var(--ink);font:600 11px var(--mono);text-align:center;padding:3px 2px;outline:none}
+</style></head>
+<body>
+<div class="wall">
+  <header>
+    <div class="t"><h1>FLEET TELEMETRY</h1><small>5 CHANNELS · VICLIX STATS</small></div>
+    <div class="hr">
+      <span class="clk" id="clk">10:10:29</span>
+      <span class="sub"><b>4 STABLE</b> · <i>1 FLATLINE</i> · next <span id="cd">12</span>s</span>
+    </div>
+  </header>
+  <div class="chs" id="chs"></div>
+  <footer><span>PULL EVERY <input value="30"> S</span><span>127.0.0.1:57475</span></footer>
+</div>
+<script>
+const APPS=[
+ {name:"JUDGLY",host:"app.judgly.com",c:"#3aff9e",lat:1271,rate:1.05,amp:1,
+  v:[["TOTAL USERS","9"],["ACTIVE POLLS","34"],["TOTAL VOTES","203"],["PURCHASED","$0"],["SPENT","$424"]]},
+ {name:"SAVAGESCROLL",host:"app.savagescroll.com",c:"#38d9ff",lat:886,rate:1.5,amp:.9,
+  v:[["TOTAL USERS","10"],["PAGES","12"],["POSTED","14"],["SCHEDULED","2,188"],["ACTIVE SUBS","0"]]},
+ {name:"CHEF SIZTH",host:"chef.sizth.com",c:"#ff4d57",dead:true,lat:null,v:null},
+ {name:"VAULT",host:"jp-vault.viclix.com",c:"#ffc857",lat:1670,rate:.8,amp:.8,
+  v:[["USERS","1"],["LIVE SERVICES","6"],["API CALLS","3"],["CREDITS","$99.87"],["REVENUE","$0"]]},
+ {name:"GEO FALL",host:"geofall.net",c:"#ff6ad5",lat:1955,rate:.65,amp:1.1,
+  v:[["PLAYERS","8"],["ACTIVE 5M","0"],["BASES","7"],["SIGNUPS","3"],["SCRAP","3,193"]]},
+];
+const chs=document.getElementById("chs");
+const scopes=[];
+for(const a of APPS){
+  const s=document.createElement("section");
+  s.className="ch"+(a.dead?" dead":"");s.style.setProperty("--c",a.c);
+  const bpm=a.dead?`<span class="tag">SIGNAL LOST</span>`
+    :`<span class="bpm">${a.lat}<small>ms</small></span>`;
+  s.innerHTML=`<div class="chh"><b>${a.name}</b><span class="host">${a.host}</span>${bpm}</div>
+    <div class="scope"><canvas></canvas></div>`+
+    (a.dead
+      ?`<div class="deadnote">no response · connection timed out · last seen 2m ago</div>`
+      :`<div class="vit">${a.v.map(([k,v])=>`<span class="v"><i>${k}</i><b>${v}</b></span>`).join("")}</div>`);
+  chs.appendChild(s);
+  scopes.push({app:a,cv:s.querySelector("canvas")});
+}
+/* ── monitor sweep ── */
+function pulse(p,amp){ /* one heartbeat over phase p∈[0,1) */
+  let y=Math.sin(p*Math.PI*2)*1.2;                 // baseline wander
+  if(p>.06&&p<.10)y+= -34*amp*Math.sin((p-.06)/.04*Math.PI);   // QRS up
+  else if(p>=.10&&p<.13)y+= 12*amp*Math.sin((p-.10)/.03*Math.PI); // dip
+  else if(p>.24&&p<.34)y+= -7*amp*Math.sin((p-.24)/.10*Math.PI);  // T wave
+  return y;
+}
+for(const sc of scopes){
+  const dpr=window.devicePixelRatio||1,cv=sc.cv,ctx=cv.getContext("2d");
+  function size(){cv.width=cv.clientWidth*dpr;cv.height=cv.clientHeight*dpr;
+    ctx.setTransform(dpr,0,0,dpr,0,0);sc.x=0;sc.py=null;}
+  size();addEventListener("resize",size);
+  sc.draw=()=>{
+    const w=cv.clientWidth,h=cv.clientHeight,base=h*.62,a=sc.app;
+    const step=1.6, gap=16;
+    ctx.clearRect(sc.x,0,step+gap,h);
+    let y;
+    if(a.dead){ y=base+(Math.random()<.008?(Math.random()*4-2):0); }
+    else{
+      const t=(sc.x/w)*(a.rate*3);           // ~3·rate beats per screen
+      y=base+pulse(t%1,a.amp)+(Math.random()*1.4-.7);
+    }
+    ctx.strokeStyle=a.c;ctx.lineWidth=1.6;ctx.lineCap="round";
+    ctx.shadowColor=a.c;ctx.shadowBlur=6;
+    if(sc.py!=null&&sc.x>0){ctx.beginPath();ctx.moveTo(sc.x-step,sc.py);ctx.lineTo(sc.x,y);ctx.stroke();}
+    ctx.shadowBlur=0;
+    ctx.fillStyle=a.c;ctx.beginPath();ctx.arc(sc.x,y,2,0,7);ctx.fill();
+    sc.py=y;sc.x+=step;
+    if(sc.x>w){sc.x=0;sc.py=null;}
+  };
+  /* pre-fill the whole strip so the trace is visible immediately */
+  const n=Math.floor(cv.clientWidth/1.6)-12;
+  for(let i=0;i<Math.max(0,n);i++)sc.draw();
+}
+(function loop(){for(const s of scopes)s.draw();requestAnimationFrame(loop)})();
+/* clock + countdown */
+setInterval(()=>{document.getElementById("clk").textContent=new Date().toTimeString().slice(0,8)},500);
+let cd=12;setInterval(()=>{cd=cd<=1?30:cd-1;document.getElementById("cd").textContent=cd},1000);
+</script>
+</body></html>

@@ -1,0 +1,131 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Mockup 6 — Deep-space radar</title>
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@500;600;700&family=Share+Tech+Mono&display=swap" rel="stylesheet">
+<style>
+:root{--bg:#020805;--ink:#e8fff2;--dim:#4e7a62;--g:#41ff8a;--g2:#1a6b40;
+  --warn:#ffd257;--bad:#ff5063;
+  --ch:'Chakra Petch',sans-serif;--stm:'Share Tech Mono',monospace}
+*{box-sizing:border-box;margin:0}
+body{background:var(--bg);color:var(--ink);font-family:var(--ch);
+  min-height:100vh;display:flex;justify-content:center}
+body::before{content:"";position:fixed;inset:0;pointer-events:none;
+  background:
+   radial-gradient(80% 40% at 50% 8%,rgba(65,255,138,.06),transparent 65%),
+   repeating-linear-gradient(0deg,rgba(65,255,138,.02) 0 1px,transparent 1px 4px)}
+.wall{position:relative;width:min(700px,100%);min-height:100vh;
+  display:flex;flex-direction:column;padding:16px 16px 10px;gap:10px}
+header{display:flex;justify-content:space-between;align-items:flex-end;padding:0 2px}
+h1{font-size:20px;font-weight:700;letter-spacing:5px}
+h1 small{display:block;font:10px var(--stm);letter-spacing:3px;color:var(--dim);margin-top:4px}
+.hr{text-align:right;font:11px var(--stm);color:var(--dim);letter-spacing:2px;line-height:1.7}
+.hr b{color:var(--ink);font-size:15px;letter-spacing:1px}
+.hr i{font-style:normal;color:var(--g)}
+/* ── radar ── */
+.radarwrap{display:flex;justify-content:center;padding:6px 0 2px}
+.radar{position:relative;width:min(330px,88vw);aspect-ratio:1;border-radius:50%;
+  background:radial-gradient(circle,#03150c 0%,#020b06 70%);
+  border:1px solid var(--g2);
+  box-shadow:0 0 40px rgba(65,255,138,.12),inset 0 0 60px rgba(65,255,138,.05)}
+.radar .ring{position:absolute;border-radius:50%;border:1px solid rgba(65,255,138,.16)}
+.radar .r1{inset:16.6%}.radar .r2{inset:33.3%}.radar .r3{inset:41.6%}
+.radar .cross{position:absolute;background:rgba(65,255,138,.12)}
+.radar .cx{left:0;right:0;top:50%;height:1px}
+.radar .cyx{top:0;bottom:0;left:50%;width:1px}
+.sweep{position:absolute;inset:0;border-radius:50%;overflow:hidden;
+  animation:rot 4.2s linear infinite}
+.sweep::before{content:"";position:absolute;inset:0;
+  background:conic-gradient(from 0deg,rgba(65,255,138,.35),rgba(65,255,138,.05) 70deg,transparent 90deg)}
+@keyframes rot{to{transform:rotate(360deg)}}
+.blip{position:absolute;transform:translate(-50%,-50%);text-align:center;z-index:2}
+.blip .dot{width:11px;height:11px;border-radius:50%;background:var(--g);margin:0 auto;
+  box-shadow:0 0 12px var(--g);animation:pulse 2.4s ease-out infinite}
+.blip.warn .dot{background:var(--warn);box-shadow:0 0 12px var(--warn)}
+.blip.bad .dot{background:var(--bad);box-shadow:0 0 14px var(--bad);animation:bk .8s steps(2) infinite}
+@keyframes pulse{0%{box-shadow:0 0 0 0 rgba(65,255,138,.5)}70%{box-shadow:0 0 0 12px rgba(65,255,138,0)}100%{box-shadow:0 0 0 0 rgba(65,255,138,0)}}
+@keyframes bk{50%{opacity:.3}}
+.blip span{display:block;margin-top:4px;font:600 10px var(--ch);letter-spacing:1.5px;
+  color:var(--ink);text-shadow:0 0 8px rgba(0,0,0,.9)}
+.blip.bad span{color:#ffb3ba}
+.radar .center{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);
+  width:8px;height:8px;border-radius:50%;background:var(--ink);
+  box-shadow:0 0 10px rgba(232,255,242,.8)}
+/* ── contact list ── */
+.list{flex:1;display:flex;flex-direction:column;gap:8px}
+.row{--c:var(--g);display:flex;flex-direction:column;gap:9px;
+  background:rgba(65,255,138,.035);border:1px solid rgba(65,255,138,.14);
+  border-left:3px solid var(--c);border-radius:4px;padding:10px 14px 11px}
+.row.warn{--c:var(--warn)}
+.row.bad{--c:var(--bad);background:rgba(255,80,99,.05);border-color:rgba(255,80,99,.25)}
+.rh{display:flex;align-items:baseline;gap:10px}
+.rh b{font-size:17px;font-weight:700;letter-spacing:2px}
+.rh .host{font:10px var(--stm);color:var(--dim);flex:1}
+.rh .png{font:11px var(--stm);color:var(--dim)}
+.rh .png b{font-size:13px;color:var(--ink);letter-spacing:0}
+.rh .tag{font:700 11px var(--ch);letter-spacing:2px;color:var(--c)}
+.row.bad .tag{background:var(--bad);color:#fff;padding:2px 8px;border-radius:2px;
+  animation:bk .9s steps(2) infinite}
+.rm{display:flex;flex-wrap:wrap;gap:6px 24px}
+.rm .m{display:flex;align-items:baseline;gap:8px}
+.rm .m b{font-size:23px;font-weight:700;font-variant-numeric:tabular-nums}
+.rm .m i{font-style:normal;font:600 11px var(--ch);letter-spacing:1px;color:var(--dim);
+  text-transform:uppercase}
+.lost{font:12px var(--stm);color:#ff9aa5;letter-spacing:1px}
+footer{display:flex;justify-content:space-between;font:10px var(--stm);
+  letter-spacing:2px;color:var(--dim);padding:2px 4px 4px}
+footer input{width:44px;background:#03150c;border:1px solid var(--g2);border-radius:3px;
+  color:var(--g);font:12px var(--stm);text-align:center;padding:3px 2px;outline:none}
+</style></head>
+<body>
+<div class="wall">
+  <header>
+    <div><h1>FLEET RADAR<small>VICLIX · SECTOR JP-01 · 5 CONTACTS</small></h1></div>
+    <div class="hr"><b id="clk">10:10:29</b><br>sweep in <i id="cd">12</i>s · every 30s</div>
+  </header>
+  <div class="radarwrap">
+    <div class="radar" id="radar">
+      <div class="ring r1"></div><div class="ring r2"></div><div class="ring r3"></div>
+      <div class="cross cx"></div><div class="cross cyx"></div>
+      <div class="sweep"></div><div class="center"></div>
+    </div>
+  </div>
+  <div class="list" id="list"></div>
+  <footer><span>VICLIX STATS · 127.0.0.1:57475</span><span>SWEEP EVERY <input value="30"> S</span></footer>
+</div>
+<script>
+const APPS=[
+ {name:"JUDGLY",host:"app.judgly.com",st:"ok",tag:"STABLE",lat:1271,x:64,y:30,
+  m:[["9","Users"],["34","Active polls"],["203","Votes"],["$0","Purchased"],["$424","Spent"]]},
+ {name:"SAVAGESCROLL",host:"app.savagescroll.com",st:"ok",tag:"STABLE",lat:886,x:30,y:44,
+  m:[["10","Users"],["12","Pages"],["14","Posted"],["2,188","Scheduled"],["0","Subs"]]},
+ {name:"CHEF SIZTH",host:"chef.sizth.com",st:"bad",tag:"LOST",lat:null,x:71,y:66,m:null},
+ {name:"VAULT",host:"jp-vault.viclix.com",st:"warn",tag:"SLOW",lat:1670,x:42,y:73,
+  m:[["1","Users"],["6","Services"],["3","API calls"],["$99.87","Credits"],["$0","Revenue"]]},
+ {name:"GEO FALL",host:"geofall.net",st:"warn",tag:"SLOW",lat:1955,x:22,y:20,
+  m:[["8","Players"],["0","Active 5m"],["7","Bases"],["3","Signups"],["3,193","Scrap"]]},
+];
+const radar=document.getElementById("radar"),list=document.getElementById("list");
+for(const a of APPS){
+  const b=document.createElement("div");
+  b.className="blip "+(a.st==="ok"?"":a.st);
+  b.style.left=a.x+"%";b.style.top=a.y+"%";
+  b.innerHTML=`<span class="dot"></span><span>${a.name.split(" ")[0]}</span>`;
+  radar.appendChild(b);
+  const r=document.createElement("section");
+  r.className="row "+(a.st==="ok"?"":a.st);
+  r.innerHTML=`<div class="rh"><b>${a.name}</b><span class="host">${a.host}</span>
+      ${a.lat?`<span class="png">ping <b>${a.lat}ms</b></span>`:""}
+      <span class="tag">${a.tag}</span></div>`+
+    (a.m?`<div class="rm">${a.m.map(([v,k])=>
+        `<span class="m"><b>${v}</b><i>${k}</i></span>`).join("")}</div>`
+      :`<div class="lost">contact lost — no response ×2 · last echo 2m ago</div>`);
+  list.appendChild(r);
+}
+setInterval(()=>{document.getElementById("clk").textContent=
+  new Date().toTimeString().slice(0,8)},500);
+let cd=12;setInterval(()=>{cd=cd<=1?30:cd-1;
+  document.getElementById("cd").textContent=cd},1000);
+</script>
+</body></html>
